@@ -120,7 +120,7 @@ def cnn_model_fn(features, labels, mode):
                                              name = "deconv_2_bn",
                                              center=True, 
                                              scale=True, 
-                                            training=(mode == tf.estimator.ModeKeys.TRAIN))
+                                             training=(mode == tf.estimator.ModeKeys.TRAIN))
 
     
     # Deconvolutional layer #3
@@ -156,7 +156,7 @@ def cnn_model_fn(features, labels, mode):
     loss = tf.losses.absolute_difference(labels = labels , predictions = conv4)
     tf.summary.scalar("Value_Loss_Function", loss)
 
-    for var in tf.trainable_variables():
+    for var in tf.trainable_variables():       # für tensorboard alle variablen ausschreiben lassen!
         name = var.name
         name = name.replace(':', '_')
         tf.summary.histogram(name, var)
@@ -180,6 +180,7 @@ train_data = X_train
 train_labels = Y_train
 eval_data = X_eval
 eval_labels = Y_eval
+
 
 runconf = tf.estimator.RunConfig(save_summary_steps=5, log_step_count_steps = 10)
 save_dir = "/scratch2/ttoebro/models/" + str(datetime.datetime.now())[0:19].replace("-", "_").replace(" ", "_").replace(":", "_").replace(".", "_")
