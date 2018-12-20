@@ -1,9 +1,11 @@
 import tensorflow as tf
 
 def parser (record):
+    '''function expects that the record file contains tuples containing x & y'''
+    
     # Define a dict with the data-names and types we expect to
     # find in the TFRecords file.
-    features = {'x': tf.FixedLenFeature([], tf.string),
+    features = {'x': tf.FixedLenFeature([], tf.string), # FIXME image was saved as string, but somehow float is expected
                 'y': tf.FixedLenFeature([], tf.string)}
 
     # Parse the serialized data so we get a dict with our data.
@@ -14,9 +16,12 @@ def parser (record):
     image_x = tf.decode_raw(parsed_example['x'], tf.float32)
     image_y = tf.decode_raw(parsed_example['y'], tf.float32)
 
+    image_x = tf.reshape(image_x, [256,256,1]) # FIXME dimension cause error
+    image_y = tf.reshape(image_y, [256, 256, 1])
+
     # is reshape of image required?
 
-    return {'x': image_x, 'y': image_y}  # ggf in einem dict?
+    return image_x, image_y  # ggf in einem dict?
 
 
 def input_fn (filenames):
@@ -25,8 +30,7 @@ def input_fn (filenames):
          https://www.tensorflow.org/api_docs/python/tf/contrib/data/map_and_batch
     '''
     # generate a source DATASET OBJECT
-    dataset = tf.data.TFRecordDataset(filenames=filenames,
-                                      num_parallel_reads=40)  # unsure about this parameter
+    dataset = tf.data.TFRecordDataset(filenames=filenames) #, num_parallel_reads=40)  # unsure about this parameter
     dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(1024, 1))
     dataset = dataset.apply(tf.contrib.data.map_and_batch(parser, 32))  # this soon will be DEPRECIATED
 
@@ -41,7 +45,7 @@ def input_fn (filenames):
 
 # Pipelines
 def train_input_fn():
-    return input_fn(filenames=["/home/jovyan/Data/TFRecords/short_Graytrain.tfrecords"]) #,
+    return input_fn(filenames=["C:/Users/timru/Documents/CODE/deepMRI1/TFRecords/XGray.tfrecord"]) #,
                              # "/home/jovyan/Data/TFRecords/short_Grayvalid.tfrecords"])
 # the second filename is just for convenience to look, if multiple tfrecords are read in correctly
 # from a model's perspective, this is absolute nonsense!
@@ -173,4 +177,112 @@ def dataset_input_fn():
   # (in which each value is a batch of values for that feature), and a batch of
   # labels.
   return dataset
+'''
+
+
+
+'''
+import numpy as np
+import tensorflow as tf
+
+# Generate TFRecords
+def _float_feature(value):
+    return tf.train.Feature(float_list = tf.train.FloatList(value = value))
+
+def createRecord (input_path, output_path, Pindexrange=range(1, 21)):
+    
+    #input_path: path of P[i]_X.npy & P[i]_Y.npy arrays
+    #output_path: is restricted to current wd; only name of output can be specified
+    #Pindexrange: range of Patient-array 'P[i]' considered. this becomes relevant, as the data is split into test & validation
+    #n is size of sample on images. Set to length of array (4055) of images for full conversion
+ 
+    with tf.python_io.TFRecordWriter(output_path) as writer:
+        for i in Pindexrange:
+            # note: this for loop must be changed to accomodate for split of dataset
+            print("Starting to write P[" + str(i) + "] image array out!")
+
+            # also actually a task performed by DATASET.zip, after having X & Y
+            # in sepperate TFRecord files? therefore, they could be zipped?
+            # Create the path of the current input nd-array
+            path_X = input_path + 'P' + str(i) + "_X.npy"
+            path_Y = input_path + 'P' + str(i) + "_Y.npy"
+
+            # Load X,Y
+            X = np.load(path_X)
+            Y = np.load(path_Y)
+
+            # Transform them to tf.records. iterate over image number dimension.
+            for x, y  in zip(X, Y):
+                example = tf.train.Example(features=tf.train.Features(
+                    feature=
+                    {
+                        'x': _float_feature(x.tostring()),
+                        'y': _float_feature(y.tostring())
+                    }
+                )
+                )
+
+                # given the 'tupel', serialize this example
+                writer.write(example.SerializeToString())
+
+                if i % 5 == 0:  # eddit size to observe progress!
+                    print('writing {}th image'.format(i))
+            print("number of saved images: " + str(i + 1))
+
+# carefull: writing is only possible to the dir where this script resides.
+# input is not as restricted
+createRecord(input_path = "C:/Users/timru/Documents/CODE/deepMRI1/Data/",
+             output_path =  "C:/Users/timru/Documents/CODE/deepMRI1/TFRecords/XGray.tfrecord",
+             Pindexrange = range(1,3))
+
+
+
+def parser (record):
+    '''function expects that the record file contains tuples containing x & y'''
+    # Define a dict with the data-names and types we expect to
+    # find in the TFRecords file.
+    features = {'x': tf.FixedLenFeature([], tf.string),
+                'y': tf.FixedLenFeature([], tf.string)}
+
+    # Parse the serialized data so we get a dict with our data.
+    parsed_example = tf.parse_single_example(serialized=record,
+                                             features=features)
+
+    # Decode the raw bytes so it becomes a tensor with type.
+    image_x = tf.decode_raw(parsed_example['x'], tf.float32)
+    image_y = tf.decode_raw(parsed_example['y'], tf.float32)
+
+
+    return image_x, image_y  # ggf in einem dict?
+
+
+def input_fn (filenames):
+    '''carefull map_and_batch & shuffle_and_repeat will soon be depreciated!
+    instead: https://www.tensorflow.org/api_docs/python/tf/contrib/data/shuffle_and_repeat
+         https://www.tensorflow.org/api_docs/python/tf/contrib/data/map_and_batch
+    '''
+    # generate a source DATASET OBJECT
+    dataset = tf.data.TFRecordDataset(filenames=filenames,
+                                      num_parallel_reads=40)  # unsure about this parameter
+    # dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(1024, 1))
+    dataset = dataset.apply(tf.contrib.data.map_and_batch(parser, 32))  # this soon will be DEPRECIATED
+
+    # apply per element transformations (map)
+    # dataset = dataset.map(parser, num_parallel_calls=12)
+
+    # consecutive elements are returned (batch [a multi element transformation])
+    # dataset = dataset.batch(batch_size=1000)
+
+    #dataset = dataset.prefetch(buffer_size=40)
+    return dataset
+
+
+D = input_fn('C:/Users/timru/Documents/CODE/deepMRI1/TFRecords/XGray.tfrecord')
+
+tf.enable_eager_execution()
+tf.executing_eagerly()
+raw_dataset = tf.data.TFRecordDataset('C:/Users/timru/Documents/CODE/deepMRI1/TFRecords/XGray.tfrecord')
+for raw_record in raw_dataset.take(1):
+  print(repr(raw_record))
+
 '''
