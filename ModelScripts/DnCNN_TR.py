@@ -149,6 +149,7 @@ DnCNN.train(input_fn=train_input_fn, steps=20)
 # (PREDICT) --------------------------------------------------------------------
 test_input_fn = tf.estimator.inputs.numpy_input_fn(
     x= test_data[0:2,:,:,:],
+    y= test_labels[0:2,:,:,:],
     batch_size=1,
     num_epochs=1,
     shuffle=False)
@@ -164,4 +165,7 @@ predicted = DnCNN.predict(input_fn=test_input_fn) #, checkpoint_path=root+ 'mode
 print(list(predicted))
 
 imgplot = plt.imshow(np.reshape(test_labels[2], (256,256))*256, cmap = 'gray')
+plt.show()
+
+imgplot = plt.imshow(np.reshape(Y1[3600], (256,256))*256, cmap = 'gray')
 plt.show()
