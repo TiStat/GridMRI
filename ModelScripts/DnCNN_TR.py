@@ -4,9 +4,11 @@ from tensorflow.contrib.layers.python.layers import initializers
 #tf.executing_eagerly()
 import numpy as np
 import datetime
+import matplotlib.pyplot as plt
 
 
-# (MODEL) --------------------------------------------------------------------
+
+# (MODEL) ----------------------------------------------------------------------
 def DnCNN_model_fn (features, labels, mode):
     """ Beyond a Gaussian Denoiser: Residual learning of Deep CNN for Image Denoising.
         Residual learning (originally with X = True + Noisy, Y = noisy)
@@ -56,7 +58,6 @@ def DnCNN_model_fn (features, labels, mode):
         # look at tf.contrib.layers.batch_norm doc.
     )
 
-
     # (iii) Conv. 3x3x64, same padding
     conv_last = tf.contrib.layers.conv2d(
         inputs=conv_bn,
@@ -75,15 +76,12 @@ def DnCNN_model_fn (features, labels, mode):
         scope=None
     )
 
-    # TRAINING
-    # (iv).1 Loss (originally averaged mean-squared-error on patches)
     loss = tf.losses.mean_squared_error(
-        labels=labels, # passed as array not dict!
-        predictions=conv_last + input_layer)
-
-    # TENSORBOARD
+                labels=labels,
+                predictions=conv_last + input_layer)
     tf.summary.scalar("Value_Loss_Function", loss)
 
+    # TENSORBOARD
     for var in tf.trainable_variables():  # write out all variables
         name = var.name
         name = name.replace(':', '_')
@@ -107,7 +105,11 @@ def DnCNN_model_fn (features, labels, mode):
     # https://machinelearningmastery.com/adam-optimization-algorithm-for-deep-learning/
 
 
-# (ESTIMATOR SPEC) -------------------------------------------------------------
+
+
+
+
+# (ESTIMATOR) -------------------------------------------------------------
 # root = '/home/cloud/' # for jupyter
 root = 'C:/Users/timru/Documents/CODE/deepMRI1/'
 d = datetime.datetime.now()
@@ -119,7 +121,6 @@ DnCNN = tf.estimator.Estimator(
     config=tf.estimator.RunConfig(save_summary_steps=2,
                                   log_step_count_steps=10)
 )
-
 
 # (DATA) -----------------------------------------------------------------------
 # instead of tf.reshape, as it produces a tensor unknown to .numpy_input_fn()
@@ -143,13 +144,11 @@ train_input_fn = tf.estimator.inputs.numpy_input_fn(
     num_epochs=None,
     shuffle=True)
 
-
 DnCNN.train(input_fn=train_input_fn, steps=20)
 
 # (PREDICT) --------------------------------------------------------------------
 test_input_fn = tf.estimator.inputs.numpy_input_fn(
     x= test_data[0:2,:,:,:],
-    y= test_labels[0:2,:,:,:],
     batch_size=1,
     num_epochs=1,
     shuffle=False)
@@ -164,3 +163,5 @@ test_input_fn = tf.estimator.inputs.numpy_input_fn(
 predicted = DnCNN.predict(input_fn=test_input_fn) #, checkpoint_path=root+ 'model/' + 'DnCNN_12_17_18_22')
 print(list(predicted))
 
+imgplot = plt.imshow(np.reshape(test_labels[2], (256,256))*256, cmap = 'gray')
+plt.show()
