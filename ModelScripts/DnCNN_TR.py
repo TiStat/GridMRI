@@ -54,8 +54,10 @@ def DnCNN_model_fn (features, labels, mode):
         scope='conv2'
         # passed arguments to conv2d, scope variable to share variables
 
-        # TODO BN: updates_collections for running mean/var for predictions
+        # TODO BN: updates_collections for running mean/var for training
+        #  control dependencies!
         # look at tf.contrib.layers.batch_norm doc.
+        # look at tim's: https://github.com/titoeb/MRT_Project/blob/master/AutoEncoder_V2.ipynb
     )
 
     # (iii) Conv. 3x3x64, same padding
@@ -76,29 +78,45 @@ def DnCNN_model_fn (features, labels, mode):
         scope=None
     )
 
-    loss = tf.losses.mean_squared_error(
-                labels=labels,
-                predictions=conv_last + input_layer)
-    tf.summary.scalar("Value_Loss_Function", loss)
 
-    # TENSORBOARD
-    for var in tf.trainable_variables():  # write out all variables
-        name = var.name
-        name = name.replace(':', '_')
-        tf.summary.histogram(name, var)
-    merged_summary = tf.summary.merge_all()
+    if mode == tf.estimator.ModeKeys.TRAIN:
+        # short circuit for training due to BN: update_ops of BN
+
+        # TENSORBOARD
+        for var in tf.trainable_variables():  # write out all variables
+            name = var.name
+            name = name.replace(':', '_')
+            tf.summary.histogram(name, var)
+        merged_summary = tf.summary.merge_all()
+
+        loss = tf.losses.mean_squared_error(
+            labels=labels,
+            predictions=conv_last + input_layer)
+        tf.summary.scalar("Value_Loss_Function", loss)
+
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            original_optimizer = tf.train.AdamOptimizer(learning_rate=0.035)
+            optimizer = tf.contrib.estimator.clip_gradients_by_norm(
+                original_optimizer, clip_norm=5.0)
+            train_op = optimizer.minimize(loss=loss,
+                                          global_step=tf.train.get_global_step())
+            return tf.estimator.EstimatorSpec(mode=mode, loss=loss,
+                                              train_op=train_op)
+
 
     return tf.estimator.EstimatorSpec(
         mode=mode,
         predictions=conv_last + input_layer,
-        loss=loss,
-        train_op=tf.train.AdamOptimizer(learning_rate=0.001, epsilon=1e-08).minimize(
-            loss=loss,
-            global_step=tf.train.get_global_step()),
-        eval_metric_ops={
-            "accuracy": tf.metrics.mean_absolute_error(
-                labels=labels,
-                predictions=conv_last + input_layer)}
+        #loss=loss,
+        #train_op=tf.train.AdamOptimizer(learning_rate=0.001,
+        # epsilon=1e-08).minimize(
+        #    loss=loss,
+        #    global_step=tf.train.get_global_step()),
+        # eval_metric_ops={
+        #    "accuracy": tf.metrics.mean_absolute_error(
+        #        labels=labels,
+        #        predictions=conv_last + input_layer)}
     )
 
     # Adam details:
@@ -121,6 +139,9 @@ DnCNN = tf.estimator.Estimator(
     config=tf.estimator.RunConfig(save_summary_steps=2,
                                   log_step_count_steps=10)
 )
+
+print( "generated DnCNN_{}_{}_{}_{} Estimator".format(d.month, d.day, d.hour,
+                                               d.minute))
 
 # (DATA) -----------------------------------------------------------------------
 # instead of tf.reshape, as it produces a tensor unknown to .numpy_input_fn()
@@ -148,11 +169,13 @@ DnCNN.train(input_fn=train_input_fn, steps=20)
 
 # (PREDICT) --------------------------------------------------------------------
 test_input_fn = tf.estimator.inputs.numpy_input_fn(
-    x= test_data[0:2,:,:,:],
-    y= test_labels[0:2,:,:,:],
-    batch_size=1,
-    num_epochs=1,
+    x= test_data,
+    y= test_labels,
     shuffle=False)
+
+
+predicted = DnCNN.predict(input_fn=test_input_fn) #, checkpoint_path=root+ 'model/' + 'DnCNN_12_17_18_22'
+pred = list(predicted)
 
 # restoring the model build from estimator: either with
 # checkpoints, which is a format dependent on the code that created the model.
@@ -160,12 +183,33 @@ test_input_fn = tf.estimator.inputs.numpy_input_fn(
 # in fact model_dir is associated with DnCNN + time stamp of training - it should therefor
 # load the correct model
 
-# FIXME predict does not work: label must not be None
-predicted = DnCNN.predict(input_fn=test_input_fn) #, checkpoint_path=root+ 'model/' + 'DnCNN_12_17_18_22')
-print(list(predicted))
 
-imgplot = plt.imshow(np.reshape(test_labels[2], (256,256))*256, cmap = 'gray')
-plt.show()
+
+# (plot the predicted) ---------------------------------------------------------
+
+def inspect_images(test_data, pred, test_labels, index, scaling = 256):
+
+    plt.figure(1)
+    plt.subplot(131)
+    plt.title('Noisy Input')
+    plt.imshow(np.reshape(test_data[index], (256,256))*scaling, cmap = 'gray')
+
+    plt.subplot(132)
+    plt.title('Prediction')
+    plt.imshow(np.reshape(pred[index], (256,256))*scaling, cmap = 'gray')
+
+    plt.subplot(133)
+    plt.title('Truth')
+    plt.imshow(np.reshape(test_labels[index], (256,256))*scaling, cmap = 'gray')
+
+    plt.show()
+
+inspect_images(test_data, pred, test_labels, index = 0)
+inspect_images(test_data, pred, test_labels, index = 1)
+
+
+
+# plot an arbitrary input image
 
 imgplot = plt.imshow(np.reshape(Y1[3600], (256,256))*256, cmap = 'gray')
 plt.show()

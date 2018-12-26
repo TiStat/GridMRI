@@ -20,7 +20,6 @@ def parser (record):
     image_y = tf.reshape(image_y, [256, 256, 1])
 
     # is reshape of image required?
-
     return image_x, image_y  # ggf in einem dict?
 
 
@@ -238,7 +237,7 @@ createRecord(input_path = "C:/Users/timru/Documents/CODE/deepMRI1/Data/",
 
 
 def parser (record):
-    '''function expects that the record file contains tuples containing x & y'''
+    '''#function expects that the record file contains tuples containing x & y'''
     # Define a dict with the data-names and types we expect to
     # find in the TFRecords file.
     features = {'x': tf.FixedLenFeature([], tf.string),
@@ -257,9 +256,9 @@ def parser (record):
 
 
 def input_fn (filenames):
-    '''carefull map_and_batch & shuffle_and_repeat will soon be depreciated!
-    instead: https://www.tensorflow.org/api_docs/python/tf/contrib/data/shuffle_and_repeat
-         https://www.tensorflow.org/api_docs/python/tf/contrib/data/map_and_batch
+    '''#carefull map_and_batch & shuffle_and_repeat will soon be depreciated!
+    #instead: https://www.tensorflow.org/api_docs/python/tf/contrib/data/shuffle_and_repeat
+    #     https://www.tensorflow.org/api_docs/python/tf/contrib/data/map_and_batch
     '''
     # generate a source DATASET OBJECT
     dataset = tf.data.TFRecordDataset(filenames=filenames,

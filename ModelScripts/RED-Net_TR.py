@@ -41,8 +41,4 @@ def REDnet_model_fn(features, labels, mode):
 # ESTIMATOR
 
 # TRAINING
-dir_data = 'C:/Users/timru/Documents/CODE/deepMRI1/Data/'
-X1 = np.load(dir_data + 'P1_X.npy')
-X1 = X1[128,:,:]
-Y1 = np.load(dir_data + 'P1_Y.npy')
-Y1 = Y1[128,:,:]
+# read in data ( e.g. concatenate)
