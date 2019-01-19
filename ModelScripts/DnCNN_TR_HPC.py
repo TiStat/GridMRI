@@ -1,13 +1,7 @@
 import datetime
-
-import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.layers.python.layers import initializers
-
-
-# tf.enable_eager_execution()
-# tf.executing_eagerly()
 
 # (MODEL) ----------------------------------------------------------------------
 def DnCNN_model_fn (features, labels, mode):
@@ -19,9 +13,10 @@ def DnCNN_model_fn (features, labels, mode):
         :kernelsize:
     """
 
+    # LAYERS -----------------------------
     # workaround, due to tf 1.11.0 rigid argument checking in Estimator
-    depth = 4
-    filters = 10
+    depth = 10
+    filters = 20
     kernelsize = 5
 
     # (0) Input layer. (batch)-1*256*256*1(channels)
@@ -58,7 +53,6 @@ def DnCNN_model_fn (features, labels, mode):
                            'trainable': False,
                            'training': mode == tf.estimator.ModeKeys.TRAIN},
         scope='conv2'
-        # passed arguments to conv2d, scope variable to share variables
     )
 
     # (iii) Conv. 3x3x64, same padding
@@ -82,11 +76,33 @@ def DnCNN_model_fn (features, labels, mode):
     if mode == tf.estimator.ModeKeys.PREDICT:
         return tf.estimator.EstimatorSpec(
             mode=mode,
-            predictions=conv_last + input_layer
-        )
+            predictions=conv_last + input_layer)
+
+    # LOSSES -----------------------------
+
+    # (MSE Version)
+    loss = tf.losses.mean_squared_error(
+        labels=labels,
+        predictions=conv_last + input_layer)  # learning difference only
+
+    # (L1 Version)
+    # loss = tf.losses.absolute_difference(
+    #    labels=labels,
+    #    predictions=conv_last + input_layer)
+
+    # (SSIM Version)
+    # loss = tf.image.ssim(conv_last + input_layer, labels, max_val = 1)
+
+    # (MS-SSIM Version)
+    # loss = tf.image.ssim_multiscale(
+    #    img1=labels,
+    #    img2=conv_last + input_layer,
+    #    max_val=1)
+
+    tf.summary.scalar("Value_Loss_Function", loss)
 
     # For both TRAIN & EVAL:
-    # TENSORBOARD
+    # TENSORBOARD ------------------------
     for var in tf.trainable_variables():
         # write out all variables
         name = var.name
@@ -94,11 +110,7 @@ def DnCNN_model_fn (features, labels, mode):
         tf.summary.histogram(name, var)
     merged_summary = tf.summary.merge_all()
 
-    loss = tf.losses.mean_squared_error(
-        labels=labels,
-        predictions=conv_last + input_layer)  # learning difference only
-    tf.summary.scalar("Value_Loss_Function", loss)
-
+    # RUN SPECIFICATIONS -----------------
     if mode == tf.estimator.ModeKeys.TRAIN:
         # BATCHNROM 'memoize'
         # look at tf.contrib.layers.batch_norm doc.
@@ -128,28 +140,21 @@ def DnCNN_model_fn (features, labels, mode):
             }
         )
 
-    # Adam details:
-    # https://machinelearningmastery.com/adam-optimization-algorithm-for-deep-learning/
-
-
-# (ESTIMATOR) -------------------------------------------------------------
-# root = '/home/cloud/' # for jupyter
-root = 'C:/Users/timru/Documents/CODE/deepMRI1/'
+# (ESTIMATOR) ------------------------------------------------------------------
+root = '/scratch2/truhkop/'
 d = datetime.datetime.now()
 
 DnCNN = tf.estimator.Estimator(
     model_fn=DnCNN_model_fn,
+    # Estimators automatically save and restore variables in the model_dir.
     model_dir=root + 'model/' +
-              "DnCNN_{}_{}_{}_{}".format(d.month, d.day, d.hour, d.minute),
-    config=tf.estimator.RunConfig(save_summary_steps=2,
-                                  log_step_count_steps=10)
+              "DnCNN_MSE_{}_{}_{}".format(d.month, d.day, d.hour),
+    config=tf.estimator.RunConfig(save_summary_steps=10,
+                                  log_step_count_steps=10) #  frequency,
 )
 
-print("generated DnCNN_{}_{}_{}_{} Estimator".format(d.month, d.day, d.hour,
-                                                     d.minute))
 
 # (DATA) -----------------------------------------------------------------------
-# instead of tf.reshape, as it produces a tensor unknown to .numpy_input_fn()
 
 def np_read_patients(root, patients=range(1,4)):
     '''Read and np.concatenate the patients arrays for noise and true image.'''
@@ -167,13 +172,12 @@ def subset_arr(X, Y, batchind = range(5)):
     The arrays are reshaped to [batchsize, hight, width, channels]'''
     return tuple(np.reshape(z[batchind, :, :], [-1, 256, 256, 1]) for z in [X,Y])
 
+# X, Y = np_read_patients(root = '/scratch2/truhkop/knee1/data/',patients=range(1,5))
+# train_data , train_label = subset_arr(X, Y, batchind = range(4055*2+1))
+# test_data, test_label = subset_arr(X, Y, batchind = range(4055*2+1, 4055*3))
 
-X, Y = np_read_patients(root = 'C:/Users/timru/Documents/CODE/deepMRI1/data/',
-                        patients=range(1,2))
-train_data , train_labels = subset_arr(X, Y, batchind = range(5))
-test_data, test_labels = subset_arr(X, Y, batchind = range(5, 8))
-
-
+train_data = np.load('/scratch2/truhkop/knee1/data/X_train.npy')
+train_label = np.load('/scratch2/truhkop/knee1/data/Y_train.npy')
 
 # (TRAINING) -------------------------------------------------------------------
 # learning with mini batch (128 images), 50 epochs
@@ -181,74 +185,10 @@ test_data, test_labels = subset_arr(X, Y, batchind = range(5, 8))
 # https://stackoverflow.com/questions/49743838/predict-single-image-after-training-model-in-tensorflow
 train_input_fn = tf.estimator.inputs.numpy_input_fn(
     x=train_data,
-    y=train_labels,
-    batch_size=2,
-    num_epochs=None,
+    y=train_label,
+    batch_size=1,
+    num_epochs=50,
     shuffle=True)
 
-DnCNN.train(input_fn=train_input_fn, steps=20)
+DnCNN.train(input_fn=train_input_fn)
 
-# (PREDICTING)
-# --------------------------------------------------------------------
-test_input_fn = tf.estimator.inputs.numpy_input_fn(
-    x=test_data,
-    y=test_labels,
-    shuffle=False)
-
-predicted = DnCNN.predict(input_fn=test_input_fn)  # , checkpoint_path=root +
-# 'model/' + "DnCNN_{}_{}_{}_{}".format(d.month, d.day, d.hour, d.minute))
-pred = list(predicted)
-
-
-# restoring the model build from estimator: either with
-# checkpoints, which is a format dependent on the code that created the model.
-# or SavedModel, which is a format independent of the code that created the
-# model. In fact model_dir is associated with DnCNN + time stamp of
-# training - it should therefor
-# load the correct model
-
-
-# (plot the predicted) ---------------------------------------------------------
-def inspect_images (noisy, pred, true, index, scaling=256):
-    """
-    :param noisy: Array of noisy input images
-    :param pred: Array of predicted images
-    :param true: Array of ground truth images
-    :param index: Images index in all of the above, which shall be plotted in
-    parallel
-    :param scaling: factor, with which the images are scaled (input
-    originally was downscaled by scaling**-1
-    """
-
-    plt.figure(1)
-    plt.subplot(131)
-    plt.title('Noisy Input')
-    plt.imshow(np.reshape(noisy[index], (256, 256)) * scaling, cmap='gray')
-
-    plt.subplot(132)
-    plt.title('Prediction')
-    plt.imshow(np.reshape(pred[index], (256, 256)) * scaling, cmap='gray')
-
-    plt.subplot(133)
-    plt.title('Truth')
-    plt.imshow(np.reshape(true[index], (256, 256)) * scaling, cmap='gray')
-
-    plt.show()
-
-
-inspect_images(noisy=test_data, pred=pred, true=test_labels, index=0)
-inspect_images(noisy=test_data, pred=pred, true=test_labels, index=1)
-
-plt.imshow(np.reshape(X1[3600], (256, 256)) * 256, cmap='gray')
-plt.show()
-
-
-
-# restore an estimator from last checkpoints ----------------------------------
-restoreDnCNN = tf.estimator.Estimator(
-    model_fn=DnCNN_model_fn,
-    model_dir=root + 'model/'+ 'DnCNN_model_restored',
-    warm_start_from='C:/Users/timru/Documents/CODE'
-                    '/deepMRI1/model/DnCNN_12_26_17_21')
-
-predictfromrestored = list(restoreDnCNN.predict(test_input_fn))
