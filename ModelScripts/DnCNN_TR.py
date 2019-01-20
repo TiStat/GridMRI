@@ -47,7 +47,8 @@ def DnCNN_model_fn (features, labels, mode):
     # (ii) Conv + BN + Relu. Filters: 64, 3x3x64,  same padding
     # 17 or 20 of these layers
     conv_bn = tf.contrib.layers.repeat(
-        inputs=conv_first, repetitions=depth - 2,
+        inputs=conv_first,
+        repetitions=depth - 2,
         layer=tf.contrib.layers.conv2d,
         num_outputs=filters, padding='SAME', stride=1,
         kernel_size=[kernelsize, kernelsize],
@@ -59,6 +60,35 @@ def DnCNN_model_fn (features, labels, mode):
         scope='conv2'
         # passed arguments to conv2d, scope variable to share variables
     )
+
+    vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='conv2')
+    print([v.name for v in vars])
+    # get all operations
+    print(tf.get_default_graph().get_operations())
+
+    # getting the operation.
+    print(tf.get_default_graph().get_operation_by_name('conv2/conv2_2/Conv2D').outputs)
+    print(tf.concat([tf.get_default_graph().get_operation_by_name('conv2/conv2_2/Conv2D').outputs,
+                     tf.get_default_graph().get_operation_by_name('conv2/conv2_2/Conv2D').outputs], 3))
+    print(tf.stack([tf.get_default_graph().get_operation_by_name('conv2/conv2_2/Conv2D').outputs,
+                     tf.get_default_graph().get_operation_by_name('conv2/conv2_2/Conv2D').outputs], 1))
+
+    # concatenating along the channel dimension
+    x = tf.constant(-1.0, shape=[1,256, 256,1])
+    tf.concat([x, x], 3)
+
+    # operation
+    print(tf.get_default_graph().get_operation_by_name('conv2/conv2_2/batch_normalization/moving_variance'))
+
+    # tensor
+    print(tf.get_default_graph().get_tensor_by_name('conv2/conv2_2/batch_normalization/moving_variance:0'))
+    x = tf.get_default_graph().get_tensor_by_name('conv2/conv2_2/batch_normalization/moving_variance:0')
+
+    print("#--------------")
+    print(tf.add(x, x))
+    print(tf.concat([x,x], 2))
+
+
 
     # (iii) Conv. 3x3x64, same padding
     conv_last = tf.contrib.layers.conv2d(
@@ -191,7 +221,7 @@ test_data, test_labels = subset_arr(X, Y, batchind = range(5, 8))
 train_input_fn = tf.estimator.inputs.numpy_input_fn(
     x=train_data,
     y=train_labels,
-    batch_size=2,
+    batch_size=1,
     num_epochs=None,
     shuffle=True)
 
