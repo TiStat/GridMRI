@@ -1,5 +1,4 @@
 import datetime
-
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -94,10 +93,20 @@ def DnCNN_model_fn (features, labels, mode):
         tf.summary.histogram(name, var)
     merged_summary = tf.summary.merge_all()
 
-    loss = tf.losses.mean_squared_error(
-        labels=labels,
-        predictions=conv_last + input_layer)  # learning difference only
+    #loss = tf.losses.mean_squared_error(
+    #    labels=labels,
+    #    predictions=conv_last + input_layer)  # learning difference only
+
+    # (SSIM Version) # throws an error
+    # ssim returns a tensor containing ssim value for each image in batch--
+    # reduce_mean??
+    loss = tf.reduce_sum(tf.image.ssim(conv_last + input_layer, labels, max_val = 1))
     tf.summary.scalar("Value_Loss_Function", loss)
+
+    # (L1 Version)
+    #loss = tf.losses.absolute_difference(
+    #    labels=labels,
+    #    predictions=conv_last + input_layer)
 
     if mode == tf.estimator.ModeKeys.TRAIN:
         # BATCHNROM 'memoize'
@@ -142,7 +151,7 @@ DnCNN = tf.estimator.Estimator(
     model_dir=root + 'model/' +
               "DnCNN_{}_{}_{}_{}".format(d.month, d.day, d.hour, d.minute),
     config=tf.estimator.RunConfig(save_summary_steps=2,
-                                  log_step_count_steps=10)
+                                  log_step_count_steps=2)
 )
 
 print("generated DnCNN_{}_{}_{}_{} Estimator".format(d.month, d.day, d.hour,
@@ -239,7 +248,12 @@ def inspect_images (noisy, pred, true, index, scaling=256):
 inspect_images(noisy=test_data, pred=pred, true=test_labels, index=0)
 inspect_images(noisy=test_data, pred=pred, true=test_labels, index=1)
 
-plt.imshow(np.reshape(X1[3600], (256, 256)) * 256, cmap='gray')
+
+
+
+
+# plt any image of the original tensor
+plt.imshow(np.reshape(X[3600], (256, 256)) * 256, cmap='gray')
 plt.show()
 
 
