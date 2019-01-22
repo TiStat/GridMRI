@@ -74,15 +74,15 @@ def DnCNN_model_fn (features, labels, mode):
                      tf.get_default_graph().get_operation_by_name('conv2/conv2_2/Conv2D').outputs], 1))
 
     # concatenating along the channel dimension
-    x = tf.constant(-1.0, shape=[1,256, 256,1])
-    tf.concat([x, x], 3)
+    #x = tf.constant(-1.0, shape=[1,256, 256,1])
+    #tf.concat([x, x], 3)
 
     # operation
     print(tf.get_default_graph().get_operation_by_name('conv2/conv2_2/batch_normalization/moving_variance'))
 
     # tensor
     print(tf.get_default_graph().get_tensor_by_name('conv2/conv2_2/batch_normalization/moving_variance:0'))
-    x = tf.get_default_graph().get_tensor_by_name('conv2/conv2_2/batch_normalization/moving_variance:0')
+    #x = tf.get_default_graph().get_tensor_by_name('conv2/conv2_2/batch_normalization/moving_variance:0')
 
     print("#--------------")
     print(tf.add(x, x))
@@ -130,7 +130,7 @@ def DnCNN_model_fn (features, labels, mode):
     # (SSIM Version) # throws an error
     # ssim returns a tensor containing ssim value for each image in batch--
     # reduce_mean??
-    loss = tf.reduce_sum(tf.image.ssim(conv_last + input_layer, labels, max_val = 1))
+    loss = tf.reduce_mean(tf.image.ssim(conv_last + input_layer, labels, max_val = 1))
     tf.summary.scalar("Value_Loss_Function", loss)
 
     # (L1 Version)
@@ -171,7 +171,7 @@ def DnCNN_model_fn (features, labels, mode):
     # https://machinelearningmastery.com/adam-optimization-algorithm-for-deep-learning/
 
 
-# (ESTIMATOR) -------------------------------------------------------------
+# (ESTIMATOR) ------------------------------------------------------------------
 # root = '/home/cloud/' # for jupyter
 root = 'C:/Users/timru/Documents/CODE/deepMRI1/'
 d = datetime.datetime.now()
@@ -221,7 +221,7 @@ test_data, test_labels = subset_arr(X, Y, batchind = range(5, 8))
 train_input_fn = tf.estimator.inputs.numpy_input_fn(
     x=train_data,
     y=train_labels,
-    batch_size=1,
+    batch_size=2,
     num_epochs=None,
     shuffle=True)
 
