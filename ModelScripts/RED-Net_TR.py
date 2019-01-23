@@ -1,5 +1,4 @@
 import datetime
-
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -7,87 +6,116 @@ import tensorflow as tf
 
 def REDnet_model_fn (features, labels, mode):
     """Image Restoration Using Convolutional Auto-encoders with Symmetric Skip-Connections
-    Conv & Deconv_k + ReLu: F(X) = max(0, W_k * X + B_k)
-    Skip connection: F(X_1, X_2) = max(0, X_1 + X_2)
-    Total of 20 or 30 layers
-
     :reps: number of repeated application of convoltuions/deconvolutions in one level
     :filters: list of numbers of out-filters for all convs/deconvs repetition.
     the len of filters is the number of levels.
     :kernelsize: size of each filter.
     """
 
-    # (new downward path) working on its own -----------------------------------
-    filters = [2, 4]
+    filters = [2, 4, 8, 12]
     # filters = [64,128,256,512,1024]
     kernelsize = 5
-    reps = 2
+    reps = 3
 
-    def leveld (inputs, filters, scope, kwargs):
-        print(inputs)
-        return tf.contrib.layers.repeat(
+    # (operations definition) --------------------------------------------------
+    def leveld (inputs, filters, scope):
+        d = tf.contrib.layers.repeat(
             inputs=inputs,
             num_outputs=filters,
             scope=scope,
-            **kwargs)
-
-    d = tf.contrib.layers.stack(inputs=features,
-                                layer=leveld,
-                                stack_args=filters,
-                                kwargs={'repetitions': reps,
-                                        'layer': tf.contrib.layers.conv2d,
-                                        'kernel_size': 5,
-                                        'padding': 'SAME',
-                                        'stride': 1,
-                                        'activation_fn': tf.nn.relu}
-                                )
-
-    vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
-    print([v.name for v in vars])
-    print(d)
-
-    # (upward patch) ----------------------------------------------------------
-    def levelu (inputs, concatin, filters, scope):
-        '''anzahl der elemente der filter gibt vor, wieviele ebenen entstehen,
-        reps entscheided, wieviele conv/deconvs in einer ebene sind'''
-        print(concatin)
-        print(inputs)
-
-        # skip connection: extracting the last tensor of the stack/repeat call.
-        inputs = tf.concat([inputs, tf.reshape(concatin, tf.shape(concatin)[1:])], axis=3, name='insert')
-
-        # deconvolution
-        return tf.contrib.layers.repeat(
-            inputs=inputs,
             repetitions=reps,
-            layer=tf.contrib.layers.conv2d_transpose,
-            num_outputs=filters,
-            padding='SAME',
+            layer=tf.contrib.layers.conv2d,
+            kernel_size=5,
+            padding='same',
             stride=1,
-            kernel_size=[kernelsize, kernelsize],
             activation_fn=tf.nn.relu,
             normalizer_fn=tf.layers.batch_normalization,
             normalizer_params={'momentum': 0.99, 'epsilon': 0.001,
                                'trainable': False,
-                               'training': mode == tf.estimator.ModeKeys.TRAIN},
-            scope=scope
+                               'training': mode == tf.estimator.ModeKeys.TRAIN}
         )
 
-    l = list(range(len(filters)))
-    for i, v in enumerate(filters[::-1]):
-        # print((i, v, l[-(i+1)]))
+        return tf.layers.max_pooling2d(
+            inputs=d,
+            pool_size=2,
+            strides=1,
+            padding='valid',
+        )
+
+
+    def levelu (inputs, concatin, filters, scope):
+        '''anzahl der elemente der filter gibt vor, wieviele ebenen entstehen,
+        reps entscheided, wieviele conv/deconvs in einer ebene sind'''
+        d = tf.contrib.layers.conv2d_transpose(
+            inputs=inputs,
+            num_outputs=filters,
+            padding='valid',
+            kernel_size=2,
+            stride=1,
+            activation_fn=tf.nn.relu,
+            normalizer_fn=tf.layers.batch_normalization,
+            normalizer_params={'momentum': 0.99, 'epsilon': 0.001,
+                               'trainable': False,
+                               'training': mode == tf.estimator.ModeKeys.TRAIN}
+        )
+
+        # print(d , concatin)
+
+        # skip connection: extracting the last tensor of the stack/repeat call.
+        d = tf.concat(
+            [d, tf.reshape(concatin, tf.shape(concatin)[1:])],
+            axis=3,
+            name='concat'
+        )
+
+        # same repeated conv on up path
+        return tf.contrib.layers.repeat(
+            inputs=d,
+            repetitions=reps,
+            layer=tf.contrib.layers.conv2d,
+            num_outputs=filters,
+            padding='same',
+            stride=1,
+            kernel_size=kernelsize,
+            activation_fn=tf.nn.relu,
+            scope=scope,
+            normalizer_fn=tf.layers.batch_normalization,
+            normalizer_params={'momentum': 0.99, 'epsilon': 0.001,
+                               'trainable': False,
+                               'training': mode == tf.estimator.ModeKeys.TRAIN}
+        )
+
+    # (downward path) ----------------------------------------------------------
+    d = tf.contrib.layers.stack(
+        inputs=features,
+        layer=leveld,
+        stack_args=filters[:-1]
+    )
+
+    # (lowest level) -----------------------------------------------------------
+    d = tf.contrib.layers.repeat(
+        inputs=d,
+        layer=tf.contrib.layers.conv2d,
+        repetitions=reps,
+        stride=1,
+        num_outputs=filters[-1],
+        kernel_size=kernelsize,
+        padding='same',
+        scope='lowest'
+    )
+
+    # (upward path) ------------------------------------------------------------
+    for i, v in zip(list(range(1,len(filters)))[::-1], filters[-2::-1]):
         d = levelu(
             inputs=d,
-            concatin=tf.get_default_graph().get_operation_by_name('Stack/leveld_' + str(i + 1) + '/leveld_' + str(
-                i + 1) + '_' + str(reps) + '/Conv2D').outputs,  # 3 durch + str(reps) + ersetzen??
+            concatin=tf.get_default_graph().get_operation_by_name(
+                'Stack/leveld_{}/leveld_{}_{}/Conv2D'.format(str(i),str(i),str(reps))).outputs,
             filters=v,
-            scope='level' + str(l[-(i + 1)])
+            scope='stackup/level_{}'.format(str(i))
         )
 
-    print(d)
-
     # (last layer) -------------------------------------------------------------
-    residual = tf.contrib.layers.conv2d_transpose(
+    residual = tf.contrib.layers.conv2d(
         inputs=d,
         kernel_size=kernelsize,
         stride=1,
@@ -100,24 +128,17 @@ def REDnet_model_fn (features, labels, mode):
                            'training': mode == tf.estimator.ModeKeys.TRAIN}
     )
 
-    # (i) Conv + ReLu. Filter: 32x5x5 or even 64
-    # convdown = tf.contrib.layers.stack(inputs=features, layer=repconv, stack_args=[item for item in filters for i in
-    # range(reps)])
-
     # variable scope access like this during session?
-    # vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='conv2')
-    # print([v.name for v in vars])
+    #vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+    #for v in vars:
+    #    print(v.name)
+
     # get all operations
     # print(tf.get_default_graph().get_operations())
 
     # getting the operation.
     # based on 'scope/variable/operation'.outputtensor
     # print(tf.get_default_graph().get_operation_by_name('conv2/conv2_2/Conv2D').outputs)
-
-    # use conv1 to skip
-
-    # (ii) Deconv + (skip connection: elementwise sum) + ReLu
-    # tf.contrib.layers.conv2d_transpose(
 
     # PREDICTION
     if mode == tf.estimator.ModeKeys.PREDICT:
@@ -136,18 +157,14 @@ def REDnet_model_fn (features, labels, mode):
     merged_summary = tf.summary.merge_all()
 
     # TRAINING
-    # (iii).1 Loss (Mean-Squared-Error)
+    # (iii).1 L1
     # (iii).2 Optimization (ADAM, base learning rate: 10^-4)
-    #         for details on momentum vectors, update rule, see recommended values p.6
-    # (L1 Version)
     loss = tf.losses.absolute_difference(
         labels=labels,
         predictions=residual + features)
     tf.summary.scalar("Value_Loss_Function", loss)
 
     if mode == tf.estimator.ModeKeys.TRAIN:
-        # BATCHNROM 'memoize'
-        # look at tf.contrib.layers.batch_norm doc.
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
             original_optimizer = tf.train.AdamOptimizer(
@@ -198,7 +215,6 @@ print("generated REDnet_{}_{}_{}_{} Estimator".format(d.month, d.day, d.hour, d.
 # (DATA) -----------------------------------------------------------------------
 def np_read_patients (root, patients=range(1, 4)):
     '''Read and np.concatenate the patients arrays for noise and true image.'''
-
     def helper (string):
         return np.concatenate(
             tuple(np.load(root + arr) for arr in
@@ -237,7 +253,7 @@ REDnet.train(input_fn=train_input_fn, steps=20)
 test_input_fn = tf.estimator.inputs.numpy_input_fn(
     x=test_data,
     y=test_labels,
-    batch=1,
+    batch_size=1,
     num_epochs=None,
     shuffle=True)
 
