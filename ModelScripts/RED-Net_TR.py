@@ -101,6 +101,10 @@ def REDnet_model_fn (features, labels, mode):
         num_outputs=filters[-1],
         kernel_size=kernelsize,
         padding='same',
+        normalizer_fn=tf.layers.batch_normalization,
+        normalizer_params={'momentum': 0.99, 'epsilon': 0.001,
+                           'trainable': False,
+                           'training': mode == tf.estimator.ModeKeys.TRAIN},
         scope='lowest'
     )
 

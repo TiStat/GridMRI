@@ -40,7 +40,11 @@ def RESnet_model_fn(features, labels, mode):
             stride=1,
             kernel_size=kernelsize,
             activation_fn=tf.nn.relu,
-            scope=scope
+            scope=scope,
+            normalizer_fn=tf.layers.batch_normalization,
+            normalizer_params={'momentum': 0.99, 'epsilon': 0.001,
+                               'trainable': False,
+                               'training': mode == tf.estimator.ModeKeys.TRAIN}
             # passed arguments to conv2d, scope variable to share variables
         )
         print(d)
@@ -57,7 +61,13 @@ def RESnet_model_fn(features, labels, mode):
                 'kernel_size': kernelsize,
                 'padding': 'valid',
                 'stride': 1,
-                'activation_fn': tf.nn.relu}
+                'activation_fn': tf.nn.relu,
+                'normalizer_fn': tf.layers.batch_normalization,
+                'normalizer_params': {'momentum': 0.99,
+                                      'epsilon': 0.001,
+                                      'trainable': False,
+                                      'training': mode == tf.estimator.ModeKeys.TRAIN}
+    }
     )
 
     # vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
@@ -73,6 +83,10 @@ def RESnet_model_fn(features, labels, mode):
         stride=1,
         kernel_size=kernelsize,
         activation_fn=tf.nn.relu,
+        normalizer_fn=tf.layers.batch_normalization,
+        normalizer_params={'momentum': 0.99, 'epsilon': 0.001,
+                           'trainable': False,
+                           'training': mode == tf.estimator.ModeKeys.TRAIN}
     )
     print(d)
     d = tf.contrib.layers.conv2d_transpose(
@@ -82,6 +96,10 @@ def RESnet_model_fn(features, labels, mode):
         stride=1,
         kernel_size=kernelsize,
         activation_fn=tf.nn.relu,
+        normalizer_fn=tf.layers.batch_normalization,
+        normalizer_params={'momentum': 0.99, 'epsilon': 0.001,
+                           'trainable': False,
+                           'training': mode == tf.estimator.ModeKeys.TRAIN}
     )
 
     print(d)
@@ -102,7 +120,11 @@ def RESnet_model_fn(features, labels, mode):
         stride=1,
         num_outputs=1,
         padding='SAME',
-        activation_fn=tf.nn.relu
+        activation_fn=tf.nn.relu,
+        normalizer_fn=tf.layers.batch_normalization,
+        normalizer_params={'momentum': 0.99, 'epsilon': 0.001,
+                           'trainable': False,
+                           'training': mode == tf.estimator.ModeKeys.TRAIN}
     )
 
     print(residual)
@@ -224,14 +246,14 @@ def subset_arr(X, Y, batchind=range(5)):
 
 X, Y = np_read_patients(root='C:/Users/timru/Documents/CODE/deepMRI1/data/',
                         patients=range(1, 2))
-train_data, train_labels = subset_arr(X, Y, batchind=range(5))
-test_data, test_labels = subset_arr(X, Y, batchind=range(5, 8))
+train_data, train_label = subset_arr(X, Y, batchind=range(5))
+test_data, test_label = subset_arr(X, Y, batchind=range(5, 8))
 
 # (TRAINING) -------------------------------------------------------------------
 train_input_fn = tf.estimator.inputs.numpy_input_fn(
     x=train_data,
-    y=train_labels,
-    batch_size=1,
+    y=train_label,
+    batch_size=2,
     num_epochs=None,
     shuffle=True)
 
@@ -240,7 +262,7 @@ RESnet.train(input_fn=train_input_fn, steps=20)
 # (TESTING) --------------------------------------------------------------------
 test_input_fn = tf.estimator.inputs.numpy_input_fn(
     x=test_data[0:2],
-    y=test_labels[0:2],
+    y=test_label[0:2],
     batch_size=1,
     num_epochs=None,
     shuffle=True)
