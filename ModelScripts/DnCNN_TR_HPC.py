@@ -156,26 +156,6 @@ DnCNN = tf.estimator.Estimator(
 
 # (DATA) -----------------------------------------------------------------------
 
-def np_read_patients(root, patients=range(1,4)):
-    '''Read and np.concatenate the patients arrays for noise and true image.'''
-    def helper(string):
-        return np.concatenate(
-            tuple(np.load(root + arr) for arr in
-                  list('P{}_{}.npy'.format(i, string) for i in patients)),
-            axis=0)
-
-    return helper('X'), helper('Y')
-
-def subset_arr(X, Y, batchind = range(5)):
-    '''intended to easily subset data into train and test.
-    :return: a Tuple of  two arrays resulted from the subset: X and Y in this order.
-    The arrays are reshaped to [batchsize, hight, width, channels]'''
-    return tuple(np.reshape(z[batchind, :, :], [-1, 256, 256, 1]) for z in [X,Y])
-
-# X, Y = np_read_patients(root = '/scratch2/truhkop/knee1/data/',patients=range(1,5))
-# train_data , train_label = subset_arr(X, Y, batchind = range(4055*2+1))
-# test_data, test_label = subset_arr(X, Y, batchind = range(4055*2+1, 4055*3))
-
 train_data = np.load('/scratch2/truhkop/knee1/data/X_train.npy')
 train_label = np.load('/scratch2/truhkop/knee1/data/Y_train.npy')
 
