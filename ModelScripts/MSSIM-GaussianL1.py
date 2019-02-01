@@ -1,88 +1,94 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.python.framework import constant_op
-from tensorflow.python.framework import dtypes
-from tensorflow.python.framework import ops
-from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import math_ops
-from tensorflow.python.ops import nn_ops
-# tf.enable_eager_execution()
+import matplotlib.pyplot as plt
 
-imgsX = np.load('C:/Users/timru/Documents/CODE/deepMRI1/Data/P1_X.npy')
-imgsY = np.load('C:/Users/timru/Documents/CODE/deepMRI1/Data/P1_Y.npy')
-img1 = tf.reshape(imgsX[0], (1,256,256,1))
-img2 = tf.reshape(imgsY[0], (1,256,256,1))
+imgs = np.load('C:/Users/timru/Documents/CODE/deepMRI1/Data/P1_X.npy')
+img1 = tf.reshape(imgs[0], (1,256,256,1))
+img2 = tf.reshape(imgs[1], (1,256,256,1))
 
-# ------------------------------------------------------------------------------
-# kernel used internally of MS-SSIM
-# https://github.com/tensorflow/tensorflow/blob/r1.12/tensorflow/python/ops/image_ops_impl.py
+# (gaussian kernel)
+# source: https://gist.github.com/charliememory/91a62ff0a102bc0bfe715711fd5c538d
+# :size: size*size is grid at which. should be uneven, so that image centroid is at gaussian mean
+# :sigma: standard deviation of Gaussian.
+size = 11
+sigma = 4
 
-def _fspecial_gauss(size, sigma):
-  """Function to mimic the 'fspecial' gaussian MATLAB function."""
-  size = ops.convert_to_tensor(size, dtypes.int32)
-  sigma = ops.convert_to_tensor(sigma)
+xaxis, yaxis = np.mgrid[-size // 2 + 1:size // 2 + 1, -size // 2 + 1:size // 2 + 1]
+xaxis = np.expand_dims(xaxis, axis=-1)
+xaxis = np.expand_dims(xaxis, axis=-1)
+yaxis = np.expand_dims(yaxis, axis=-1)
+yaxis = np.expand_dims(yaxis, axis=-1)
 
-  coords = math_ops.cast(math_ops.range(size), sigma.dtype)
-  coords -= math_ops.cast(size - 1, sigma.dtype) / 2.0
+x = tf.constant(xaxis, dtype=tf.float32)
+y = tf.constant(yaxis, dtype=tf.float32)
+g = tf.exp(-((x ** 2 + y ** 2) / (2.0 * sigma ** 2)))
+g = g / tf.reduce_sum(g) # normalizing on grid
 
-  g = math_ops.square(coords)
-  g *= -0.5 / math_ops.square(sigma)
+# to calculate kernel only once on runtime
+g = tf.Variable(tf.reshape(g, (size, size, 1)))
+g.size = size
 
-  g = array_ops.reshape(g, shape=[1, -1]) + array_ops.reshape(g, shape=[-1, 1])
-  g = array_ops.reshape(g, shape=[1, -1])  # For tf.nn.softmax().
-  g = nn_ops.softmax(g)
-  return array_ops.reshape(g, shape=[size, size, 1, 1])
 
-filter_size = constant_op.constant(11, dtype=dtypes.int32)
-filter_sigma = constant_op.constant(1.5, dtype=img1.dtype)
-# values according to MS-SSIM source code
-kernel = _fspecial_gauss(
-    size=filter_size,
-    sigma=filter_sigma)
-
-def loss_ssim_multiscale_GL1(trueimg, noisyimg, alpha = 0.84):
-    ''' Loss function, calculating alpha * Loss_msssim + (1-alpha) gaussiankernel * L1_loss
-    according to 'Loss Functions for Image Restoration with Neural Networks' [Zhao]
-    :alpha: default value accoording to paper'''
-    kernelonL1 = tf.nn.conv2d(
-        input=tf.subtract(trueimg, noisyimg),
-        filter=kernel,
-        strides=[1, 1, 1, 1],  # according to MS-SSIM source
+def gaus_l1(img1, img2, stride, alpha=0.3, kernel=g):
+    ''':stride: shift of the centroid in both width and height'''
+    nimg = tf.extract_image_patches(
+        images=img1,
+        ksizes=[1, g.size, g.size, 1],
+        strides=[1, stride, stride, 1],
+        rates=[1, 1, 1, 1],
         padding='VALID')
 
-    # number of patches * number of pixels per patch
-    img_patch_norm = tf.to_float(kernelonL1.shape[1] * filter_size ** 2)
-    GL1 = tf.reduce_sum(kernelonL1) / img_patch_norm
+    timg = tf.extract_image_patches(
+        images=img2,
+        ksizes=[1, g.size, g.size, 1],
+        strides=[1, stride, stride, 1],
+        rates=[1, 1, 1, 1],
+        padding='VALID')
 
-    # ssim_multiscale already calculates the dyalidic pyramid (with avg.pooling)
-    msssims = tf.image.ssim_multiscale(img1=trueimg, img2=noisyimg, max_val=1)
-    msssim = tf.reduce_sum(msssims)
+    x = tf.reshape(nimg, [-1, g.size, g.size, 1])
+    y = tf.reshape(timg, [-1, g.size, g.size, 1])
+    z = x - y
 
-    return alpha * (1 - msssim) + (1 - alpha) * GL1
+    # where g is gaussian kernel
+    L1 = tf.reduce_sum(tf.map_fn(fn=lambda p: p * g, elems=z))
 
-print(loss_ssim_multiscale_GL1(img1, img2))
+    #ms-ssim on patches (parallel traversel)
+    # TODO the msssim parallel traversel on patches does not work.
 
+    c = tf.stack([x, y], axis=1)
+    msssims = tf.map_fn(
+        fn=lambda x: tf.image.ssim_multiscale(x[0], x[1], max_val=1),
+        elems=c,
+        dtype=tf.float32
+    )
+         #msssim = tf.reduce_sum(msssims)
 
+         #loss = (1 - alpha) * msssim + alpha * L1
 
-# plot kernel ------------------------------------------------------------------
-import matplotlib.pyplot as plt
-init = tf.global_variables_initializer()
+    return msssims
+
+init = tf.initialize_all_variables()
 with tf.Session() as sess:
     sess.run(init)
-    kernel = sess.run(
-        tf.reshape(
-            _fspecial_gauss(
-                size=filter_size,
-                sigma=filter_sigma),
-            shape=(11, 11))
-    )
-plt.imshow(kernel, cmap='gray')
+    c =sess.run(gaus_l1(img1=img1, img2=img2, stride = 4, alpha = 0.3))
+
+# (LOSS: weighted MS-SSIM + G*L1) ----------------------------------------------
+# :alpha: scalar value, weight: alpha * l1 + (1-alpha) * ms-ssim
+msssims = tf.image.ssim_multiscale(img1=img1, img2=img2, max_val=1),
+msssim = tf.reduce_sum(msssims)
+alpha = 0.3
+loss = (1 - alpha) * msssim + alpha * gaus_l1(img1=img1, img2=img2, stride = 4, alpha = 0.3)
+
+init = tf.initialize_all_variables()
+with tf.Session() as sess:
+    sess.run(init)
+    print(sess.run(gaus_l1(img1=img1, img2=img2, stride = 4, alpha = 0.3)))
+    kernel = sess.run(g)
+
+
+plt.imshow(np.reshape(kernel, (size,size)), cmap='gray')
 plt.show()
 
 
 
 
-# ------------------------------------------------------------------------------
-# ssim loss:
-loss_ssim = 1-tf.image.ssim(img1=img1, img2=img2, max_val=1)
-loss_ssim_multiscale= 1-tf.image.ssim_multiscale(img1=img1, img2=img2, max_val=1)
