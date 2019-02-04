@@ -1,9 +1,188 @@
+
+
+# (PNG pipe) -------------------------------------------------------------------
+import scipy.misc as sci
+import numpy as np
+import tensorflow as tf
+import glob
+import os
+
+
+# writing npy to image files
+img = np.load('C:/Users/timru/Documents/CODE/deepMRI1/Data/P1_X.npy')
+for i, im in enumerate(img):
+    sci.imsave('C:/Users/timru/Documents/CODE/deepMRI1/Datajpg/P1_{}X.jpg'.format(i), im)
+
+img = np.load('C:/Users/timru/Documents/CODE/deepMRI1/Data/P1_Y.npy')
+for i, im in enumerate(img):
+    sci.imsave('C:/Users/timru/Documents/CODE/deepMRI1/Datajpg/P1_{}Y.jpg'.format(i), im)
+
+
+# ------------------------------------------------------------------------------
+# (try to split on filename basis)
+Xnames = []
+Ynames = []
+# TODO replicate the Y file names 5 times
+Xnames.extend(glob.glob(os.path.join('C:/Users/timru/Documents/CODE/deepMRI1/Datajpg/', '*X.jpg')))
+Ynames.extend(glob.glob(os.path.join('C:/Users/timru/Documents/CODE/deepMRI1/Datajpg/', '*Y.jpg')))
+
+zippednames = [(x,y) for x,y in zip(Xnames, Ynames) ]
+
+# at this point one can split the dataset into train, test , valid, eval
+train_set = zippednames[0:3000]
+test_set = zippednames[3000:4055]
+
+def input_fn(zippedfilepaths):
+    ''':zippedfilepaths: list of tuples, which contain the filepaths to (featureimg, labelimg_path)'''
+
+    zippednames = tf.data.Dataset.from_tensor_slices(zippedfilepaths)
+    zippednames = zippednames.shuffle(buffer_size=4055)
+
+    image_dataset = zippednames.map(
+        lambda x:
+        (tf.image.decode_image(tf.read_file(x[0]), channels=1),
+         tf.image.decode_image(tf.read_file(x[1]), channels=1))  # TODO zippednames outshape (256,256,1) reshape?
+    )  # decode_png
+
+    return image_dataset
+
+
+image_dataset = input_fn(train_set)
+iterator = image_dataset.make_one_shot_iterator()
+next_image = iterator.get_next()
+with tf.Session() as sess:
+    X, Y = sess.run(next_image)
+
+
+# ------------------------------------------------------------------------------
+
+filename_datasetX = tf.data.Dataset.list_files("C:/Users/timru/Documents/CODE/deepMRI1/Datajpg/*X.jpg")
+filename_datasetY = tf.data.Dataset.list_files("C:/Users/timru/Documents/CODE/deepMRI1/Datajpg/*Y.jpg")
+
+
+# Make a Dataset of image tensors by reading and decoding the files.
+image_datasetX = filename_datasetX.map(lambda x: tf.image.decode_image(tf.read_file(x), 1)) # decode_png
+image_datasetY = filename_datasetY.map(lambda x: tf.image.decode_image(tf.read_file(x), 1))
+
+full = tf.data.Dataset.zip((image_datasetX, image_datasetY))
+
+iterator = full.make_one_shot_iterator()
+next_image = iterator.get_next()
+
+with tf.Session() as sess:
+    X, Y = sess.run(next_image)
+
+# ------------------------------------------------------------------------------
+Xnames = []
+Ynames = []
+Xnames.extend(glob.glob(os.path.join('C:/Users/timru/Documents/CODE/deepMRI1/Datajpg/', '*X.jpg')))
+Ynames.extend(glob.glob(os.path.join('C:/Users/timru/Documents/CODE/deepMRI1/Datajpg/', '*Y.jpg')))
+
+Xnames = tf.data.Dataset.from_tensors(tf.convert_to_tensor(Xnames))
+Ynames = tf.data.Dataset.from_tensors(tf.convert_to_tensor(Ynames))
+
+image_datasetX = Xnames.map(lambda x: tf.image.decode_image(tf.read_file(x), 1))  # decode_png
+image_datasetY = Ynames.map(lambda x: tf.image.decode_image(tf.read_file(x), 1))
+
+full = tf.data.Dataset.zip((image_datasetX, image_datasetY))
+
+iterator = full.make_one_shot_iterator()
+next_image = iterator.get_next()
+with tf.Session() as sess:
+    X, Y = sess.run(next_image)
+
+    #types = ('*X.jpg', '*Y.jpg')
+    #images_list = []
+    #for files in types:
+    #    images_list.extend(glob.glob(os.path.join('C:/Users/timru/Documents/CODE/deepMRI1/Datajpg/', files)))
+
+
+
+
+
+
+
+###############################################################################
+###############################################################################
+###############################################################################
+#(Failing attempt) memory usage is exceeded
+
+import tensorflow as tf
+import numpy as np
+
+# initialize
+X = np.load('C:/Users/timru/Documents/CODE/deepMRI1/Data/P1_X.npy')
+Y = np.load('C:/Users/timru/Documents/CODE/deepMRI1/Data/P1_Y.npy')
+dataset0 = tf.data.Dataset.from_tensor_slices((X, Y))
+
+for i in [2,3]:
+    X = np.load('C:/Users/timru/Documents/CODE/deepMRI1/Data/P{}_X.npy'.format(i))
+    Y = np.load('C:/Users/timru/Documents/CODE/deepMRI1/Data/P{}_Y.npy'.format(i))
+    dataset1 = tf.data.Dataset.from_tensor_slices((X,Y))
+    dataset0 = dataset0.concatenate(dataset1)
+
+iterator = dataset0.make_one_shot_iterator()
+next_image = iterator.get_next()
+with tf.Session() as sess:
+    imgX, imgY = (sess.run(next_image))
+
+X = np.load('C:/Users/timru/Documents/CODE/deepMRI1/Data/P1_X.npy')
+imgX == X[0]
+
+
+
+
+###############################################################################
+###############################################################################
+###############################################################################
+
+
+
+
+
 '''Tutorial taken and edited from
 https://www.tensorflow.org/guide/datasets_for_estimators
 '''
 
 import tensorflow as tf
 import numpy as np
+
+def read_npy_file(item):
+    data = np.load(item.decode())
+    return data.astype(np.float32)
+
+filename_datasetX = tf.data.Dataset.list_files("C:/Users/timru/Documents/CODE/deepMRI1/Data/*X.npy")
+filename_datasetY = tf.data.Dataset.list_files("C:/Users/timru/Documents/CODE/deepMRI1/Data/*Y.npy")
+
+imgX = filename_datasetX.map(lambda item: tf.py_func(read_npy_file, [item], [tf.float32,]))
+imgY = filename_datasetY.map(lambda item: tf.py_func(read_npy_file, [item], [tf.float32,]))
+full = tf.data.Dataset.zip((imgX,imgY)) # results in a tuple
+#full = full.shuffle(2)
+
+iterator = full.make_one_shot_iterator()
+next_image = iterator.get_next()
+
+# Start a new session to show example output.
+with tf.Session() as sess:
+    X, Y = sess.run(next_image) # carefull: shape [1,4055,256,256]
+    print(X)
+
+    print(tf.shape(X))
+    X, Y = sess.run(next_image)
+    print(X)
+
+import matplotlib.pyplot as plt
+
+plt.imshow(np.reshape(X[0][0], (256, 256)) * 255, cmap='gray')
+plt.show()
+
+
+
+
+
+
+
+# ------------------------------------------------------------------------------
 
 # (parallel iterating on two Datasets)------------------------------------------
 inc_dataset = tf.data.Dataset.range(100)
@@ -43,7 +222,7 @@ with tf.Session as sess:
     sess.run(iterator.initializer, feed_dict={features_placeholder: features,
                                               labels_placeholder: labels})
 
-'C:\\Users\\timru\\Documents\\CODE\\deepMRI1\\Data\\P1_X.npy'.replace('\\', '/')
+'C://Users//timru//Documents//CODE//deepMRI1//Data//P1_X.npy'.replace('//', '/')
 
 # (feed_dict for placeholders example) -----------------------------------------
 # Define training and validation datasets with the same structure.
