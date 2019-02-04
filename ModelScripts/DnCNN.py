@@ -1,16 +1,9 @@
 import datetime
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib.layers.python.layers import initializers
-
-# packages needed for MS-SSIM-GL1 loss
 from tensorflow.python.ops.image_ops_impl import _fspecial_gauss
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
-from tensorflow.python.framework import ops
-from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import math_ops
-from tensorflow.python.ops import nn_ops
 
 # optional, must be removed for server
 import matplotlib.pyplot as plt
@@ -19,7 +12,6 @@ import matplotlib.pyplot as plt
 
 
 lossflavour = ['MAE', 'MSE', 'SSIM', 'MS-SSIM-GL1'][1]
-
 def DnCNN_model_fn(features, labels, mode):
     """ Beyond a Gaussian Denoiser: Residual learning
         of Deep CNN for Image Denoising.
@@ -48,10 +40,6 @@ def DnCNN_model_fn(features, labels, mode):
         activation_fn=tf.nn.relu,
         normalizer_fn=None,
         normalizer_params=None,
-        weights_initializer=initializers.xavier_initializer(),
-        weights_regularizer=None,
-        biases_initializer=tf.zeros_initializer(),
-        biases_regularizer=None,
         trainable=True,
         scope=None
     )
@@ -66,9 +54,11 @@ def DnCNN_model_fn(features, labels, mode):
         kernel_size=kernelsize,
         activation_fn=tf.nn.relu,
         normalizer_fn=tf.layers.batch_normalization,
-        normalizer_params={'momentum': 0.99, 'epsilon': 0.001,
-                           'trainable': False,
-                           'training': mode == tf.estimator.ModeKeys.TRAIN},
+        normalizer_params={
+            'momentum': 0.99,
+            'epsilon': 0.001,
+            'trainable': False,
+            'training': mode == tf.estimator.ModeKeys.TRAIN},
         scope='conv2'
         # passed arguments to conv2d, scope variable to share variables
     )
@@ -111,10 +101,6 @@ def DnCNN_model_fn(features, labels, mode):
         activation_fn=tf.nn.relu,
         normalizer_fn=None,
         normalizer_params=None,
-        weights_initializer=initializers.xavier_initializer(),
-        weights_regularizer=None,
-        biases_initializer=tf.zeros_initializer(),
-        biases_regularizer=None,
         trainable=True,
         scope=None
     )
@@ -293,9 +279,6 @@ train_data, train_labels = subset_arr(X, Y, batchind=range(5))
 test_data, test_labels = subset_arr(X, Y, batchind=range(5, 8))
 
 # (TRAINING) -------------------------------------------------------------------
-# learning with mini batch (128 images), 50 epochs
-# rewrite with tf.placeholder, session.run
-# https://stackoverflow.com/questions/49743838/predict-single-image-after-training-model-in-tensorflow
 train_input_fn = tf.estimator.inputs.numpy_input_fn(
     x=train_data,
     y=train_labels,
@@ -370,16 +353,7 @@ DnCNN.evaluate(input_fn=test_input_fn)
 print('Evaluated REDnet_L1_{}_{}_{}_{} Estimator'.format(d.month, d.day, d.hour, d.minute))
 
 
-
-
-# restore an estimator from last checkpoints ----------------------------------
-# restoring the model build from estimator: either with
-# checkpoints, which is a format dependent on the code that created the model.
-# or SavedModel, which is a format independent of the code that created the
-# model. In fact model_dir is associated with DnCNN + time stamp of
-# training - it should therefor
-# load the correct model
-
+# (restore) an estimator from last checkpoints ----------------------------------
 restoreDnCNN = tf.estimator.Estimator(
     model_fn=DnCNN_model_fn,
     model_dir=root + 'model/' + 'DnCNN_model_restored',
