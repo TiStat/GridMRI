@@ -5,13 +5,27 @@ from tensorflow.python.ops.image_ops_impl import _fspecial_gauss
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 
-# optional, must be removed for server
-import matplotlib.pyplot as plt
-# tf.enable_eager_execution()
-# tf.executing_eagerly()
+# Code configuration depending on task
+lossflavour = ['MAE', 'MSE', 'SSIM', 'MS-SSIM-GL1'][0]
+training = True
+predict = False
+restore = False
+evaluation = False # note that predict must be TRUE, if restore = False
+
+# Code configuration depending on platform
+platform = ['hpc', 'cloud', 'home'][2]
+root = {'hpc':'/scratch2/truhkop/',
+        'cloud':'/home/cloud/',
+        'home':'C:/Users/timru/Documents/CODE/deepMRI1/'} [platform]
 
 
-lossflavour = ['MAE', 'MSE', 'SSIM', 'MS-SSIM-GL1'][1]
+if platform == 'home':
+    # optional, must be removed for server
+    import matplotlib.pyplot as plt
+    # tf.enable_eager_execution()
+    # tf.executing_eagerly()
+
+
 def DnCNN_model_fn(features, labels, mode):
     """ Beyond a Gaussian Denoiser: Residual learning
         of Deep CNN for Image Denoising.
@@ -167,15 +181,16 @@ def DnCNN_model_fn(features, labels, mode):
         )
         return alpha * (1 - msssim) + (1 - alpha) * gl1
 
-    # Discrete Gaussian Kernel (required only in MS-SSIM-GL1 case)
-    # not in MS-SSIM-GL1 function, as it is executed only once
-    # values according to MS-SSIM source code
-    filter_size = constant_op.constant(11, dtype=dtypes.int32)
-    filter_sigma = constant_op.constant(1.5, dtype=features.dtype)
-    gaussiankernel = _fspecial_gauss(
-        size=filter_size,
-        sigma=filter_sigma
-    )
+    if lossflavour == 'MS-SSIM-GL1':
+        # Discrete Gaussian Kernel (required only in MS-SSIM-GL1 case)
+        # not in MS-SSIM-GL1 function, as it is executed only once
+        # values according to MS-SSIM source code
+        filter_size = constant_op.constant(11, dtype=dtypes.int32)
+        filter_sigma = constant_op.constant(1.5, dtype=features.dtype)
+        gaussiankernel = _fspecial_gauss(
+            size=filter_size,
+            sigma=filter_sigma
+        )
 
     # for TRAIN & EVAL
     loss = {
@@ -234,10 +249,7 @@ def DnCNN_model_fn(features, labels, mode):
 
 
 # (ESTIMATOR) ------------------------------------------------------------------
-# root = '/home/cloud/' # for jupyter
-root = 'C:/Users/timru/Documents/CODE/deepMRI1/'
 d = datetime.datetime.now()
-
 DnCNN = tf.estimator.Estimator(
     model_fn=DnCNN_model_fn,
     model_dir=root + 'model/DnCNN_' +
@@ -251,32 +263,47 @@ print("generated {}_{}_{}_{}_{} Estimator".format(lossflavour, d.month, d.day, d
 
 
 # (DATA) -----------------------------------------------------------------------
-# instead of tf.reshape, as it produces a tensor unknown to .numpy_input_fn()
+if platform == 'hpc':
+    if training:
+        train_data = np.load('/scratch2/truhkop/knee1/data/X_train.npy')
+        train_labels = np.load('/scratch2/truhkop/knee1/data/Y_train.npy')
 
-def np_read_patients(root, patients=range(1, 4)):
-    '''Read and np.concatenate the patients arrays for noise and true image.'''
-    def helper(string):
-        return np.concatenate(
-            tuple(np.load(root + arr) for arr in
-                  list('P{}_{}.npy'.format(i, string) for i in patients)),
-            axis=0)
+    if predict:
+        test_data= np.load('/scratch2/truhkop/knee1/data/X_test.npy')
+        test_labels=  np.load('/scratch2/truhkop/knee1/data/Y_test.npy')
 
-    return helper('X'), helper('Y')
+elif platform == 'cloud':
+    pass
 
+elif platform == 'home':
+    # instead of tf.reshape, as it produces a tensor unknown to .numpy_input_fn()
 
-def subset_arr(X, Y, batchind=range(5)):
-    '''intended to easily subset data into train and test.
-    :return: a Tuple of  two arrays resulted from the subset: X and Y in this order.
-    The arrays are reshaped to [batchsize, hight, width, channels]'''
-    return tuple(np.reshape(z[batchind, :, :], [-1, 256, 256, 1]) for z in [X, Y])
+    def np_read_patients (root, patients=range(1, 4)):
+        '''Read and np.concatenate the patients arrays for noise and true image.'''
 
+        def helper (string):
+            return np.concatenate(
+                tuple(np.load(root + arr) for arr in
+                      list('P{}_{}.npy'.format(i, string) for i in patients)),
+                axis=0)
 
-X, Y = np_read_patients(
-    root='C:/Users/timru/Documents/CODE/deepMRI1/data/',
-    patients=range(1, 2))
+        return helper('X'), helper('Y')
 
-train_data, train_labels = subset_arr(X, Y, batchind=range(5))
-test_data, test_labels = subset_arr(X, Y, batchind=range(5, 8))
+    def subset_arr (X, Y, batchind=range(5)):
+        '''intended to easily subset data into train and test.
+        :return: a Tuple of  two arrays resulted from the subset: X and Y in this order.
+        The arrays are reshaped to [batchsize, hight, width, channels]'''
+        return tuple(np.reshape(z[batchind, :, :], [-1, 256, 256, 1]) for z in [X, Y])
+
+    X, Y = np_read_patients(
+        root='C:/Users/timru/Documents/CODE/deepMRI1/data/',
+        patients=range(1, 2))
+
+    if training:
+        train_data, train_labels = subset_arr(X, Y, batchind=range(20))
+
+    if predict:
+        test_data, test_labels = subset_arr(X, Y, batchind=range(5, 8))
 
 # (TRAINING) -------------------------------------------------------------------
 train_input_fn = tf.estimator.inputs.numpy_input_fn(
@@ -286,102 +313,109 @@ train_input_fn = tf.estimator.inputs.numpy_input_fn(
     num_epochs=None,
     shuffle=True)
 
-DnCNN.train(input_fn=train_input_fn, steps=2)
+DnCNN.train(input_fn=train_input_fn, steps=4)
+
+
+
+
+
 
 # (PREDICTING) -----------------------------------------------------------------
-test_input_fn = tf.estimator.inputs.numpy_input_fn(
-    x=test_data,
-    y=test_labels,
-    shuffle=False)
+if predict:
+    test_input_fn = tf.estimator.inputs.numpy_input_fn(
+        x=test_data,
+        y=test_labels,
+        shuffle=False)
 
-predicted = DnCNN.predict(input_fn=test_input_fn)  # , checkpoint_path=root +
-# 'model/' + "DnCNN_{}_{}_{}_{}".format(d.month, d.day, d.hour, d.minute))
-pred = list(predicted)
-
-
-
-# (plot the predicted) ---------------------------------------------------------
-def inspect_images(noisy, pred, true, index, scaling=256):
-    """
-    :param noisy: Array of noisy input images
-    :param pred: Array of predicted images
-    :param true: Array of ground truth images
-    :param index: Images index in all of the above, which shall be plotted in
-    parallel
-    :param scaling: factor, with which the images are scaled (input
-    originally was downscaled by scaling**-1
-    """
-
-    plt.figure(1)
-    plt.subplot(131)
-    plt.title('Noisy Input')
-    plt.imshow(np.reshape(noisy[index], (256, 256)) * scaling, cmap='gray')
-
-    plt.subplot(132)
-    plt.title('Prediction')
-    plt.imshow(np.reshape(pred[index], (256, 256)) * scaling, cmap='gray')
-
-    plt.subplot(133)
-    plt.title('Truth')
-    plt.imshow(np.reshape(true[index], (256, 256)) * scaling, cmap='gray')
-
-    plt.show()
+    predicted = DnCNN.predict(input_fn=test_input_fn)  # , checkpoint_path=root +
+    # 'model/' + "DnCNN_{}_{}_{}_{}".format(d.month, d.day, d.hour, d.minute))
+    predicted = list(predicted)
 
 
-inspect_images(noisy=test_data, pred=pred, true=test_labels, index=0)
-inspect_images(noisy=test_data, pred=pred, true=test_labels, index=1)
+    # (plot the predicted) -----------------------------------------------------
+    def inspect_images (noisy, pred, true, index, scaling=256):
+        """
+        :param noisy: Array of noisy input images
+        :param pred: Array of predicted images
+        :param true: Array of ground truth images
+        :param index: Images index in all of the above, which shall be plotted in
+        parallel
+        :param scaling: factor, with which the images are scaled (input
+        originally was downscaled by scaling**-1
+        """
 
-# plt any image of the original tensor
-# plt.imshow(np.reshape(X[3600], (256, 256)) * 256, cmap='gray')
-# plt.show()
+        plt.figure(1)
+        plt.subplot(131)
+        plt.title('Noisy Input')
+        plt.imshow(np.reshape(noisy[index], (256, 256)) * scaling, cmap='gray')
+
+        plt.subplot(132)
+        plt.title('Prediction')
+        plt.imshow(np.reshape(pred[index], (256, 256)) * scaling, cmap='gray')
+
+        plt.subplot(133)
+        plt.title('Truth')
+        plt.imshow(np.reshape(true[index], (256, 256)) * scaling, cmap='gray')
+
+        plt.show()
 
 
+    inspect_images(noisy=test_data, pred=predicted, true=test_labels, index=0)
+    inspect_images(noisy=test_data, pred=predicted, true=test_labels, index=1)
+
+    # plt any image of the original tensor
+    # plt.imshow(np.reshape(X[3600], (256, 256)) * 256, cmap='gray')
+    # plt.show()
 
 
 # (EVALUATION) -----------------------------------------------------------------
-valid_data = test_data
-valid_labels = test_labels
-
-test_input_fn = tf.estimator.inputs.numpy_input_fn(
-    x=valid_data,
-    y=valid_labels,
-    batch_size=1,
-    num_epochs=1,
-    shuffle=False)
-
-DnCNN.evaluate(input_fn=test_input_fn)
-print('Evaluated REDnet_L1_{}_{}_{}_{} Estimator'.format(d.month, d.day, d.hour, d.minute))
+if evaluation:
 
 
-# (restore) an estimator from last checkpoints ----------------------------------
-restoreDnCNN = tf.estimator.Estimator(
-    model_fn=DnCNN_model_fn,
-    model_dir=root + 'model/' + 'DnCNN_model_restored',
-    warm_start_from='C:/Users/timru/Documents/CODE'
-                    '/deepMRI1/model/DnCNN_12_26_17_21')
+    # still left to be seperate
+    valid_data = test_data
+    valid_labels = test_labels
 
-predictfromrestored = list(restoreDnCNN.predict(test_input_fn))
+    test_input_fn = tf.estimator.inputs.numpy_input_fn(
+        x=valid_data,
+        y=valid_labels,
+        batch_size=1,
+        num_epochs=1,
+        shuffle=False)
 
+    DnCNN.evaluate(input_fn=test_input_fn)
+    print('Evaluated DnCNN_{}_{}_{}_{}_{} Estimator'.format(lossflavour, d.month, d.day, d.hour, d.minute))
 
+    # (restore) an estimator from last checkpoints ----------------------------------
+    if restore:
+        restoreDnCNN = tf.estimator.Estimator(
+            model_fn=DnCNN_model_fn,
+            model_dir=root + 'model/' + 'DnCNN_model_restored',
+            warm_start_from=root + 'model/DnCNN_' + 'MAE_' + '3_3_10_36')
+        # warm_start_from=root + 'model/DnCNN_' +
+        #          "{}_{}_{}_{}_{}".format(lossflavour, d.month, d.day, d.hour, d.minute))
 
+        predict = list(restoreDnCNN.predict(test_input_fn))
 
+    import skimage
 
-# NOTE skimage not yet available on server
-sum_mae = 0
-sum_mse = 0
-sum_ssim = 0
-for im_num in range(0, test_labels.shape[0]):
-    prediction = next(predictfromrestored)
-    true_image = test_labels[im_num,:,:,:]
-    sum_mae += np.mean(np.abs(prediction - true_image))
-    sum_mse += np.mean(np.power((prediction - true_image), 2))
-    # sum_ssim += skimage.measure.compare_ssim(prediction[:,:,0],  true_image[:,:,0])
-    if(im_num % 500 == 0):
-        print("Current mae is " + str(sum_mae) + " and mse is " + str(sum_mse) + " and ssim is " + str(sum_ssim) + " at picture " + str(im_num))
-# 	sci.imsave(root + 'predictedImg/DnCNN_MSE_2_1_23_no{}.jpg'.format(im_num),
-#                  np.reshape(prediction*255, (256, 256,1)))
+    # NOTE skimage not yet available on server
+    sum_mae = 0
+    sum_mse = 0
+    sum_ssim = 0
+    for im_num in range(0, test_labels.shape[0]):
+        prediction = predict[im_num]
+        true_image = test_labels[im_num, :, :, :]
+        sum_mae += np.mean(np.abs(prediction - true_image))
+        sum_mse += np.mean(np.power((prediction - true_image), 2))
+        sum_ssim += skimage.measure.compare_ssim(prediction[:, :, 0], true_image[:, :, 0])
+        if (im_num % 500 == 0):
+            print("Current mae is " + str(sum_mae) + " and mse is " + str(sum_mse) + " and ssim is " + str(
+                sum_ssim) + " at picture " + str(im_num))
+    # 	sci.imsave(root + 'predictedImg/DnCNN_MSE_2_1_23_no{}.jpg'.format(im_num),
+    #                  np.reshape(prediction*255, (256, 256,1)))
 
-print('MAE', sum_mae)
-print('MSE', sum_mse)
-print('SSIM', sum_ssim)
+    print('MAE', sum_mae)
+    print('MSE', sum_mse)
+    print('SSIM', sum_ssim)
 

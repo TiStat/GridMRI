@@ -1,7 +1,7 @@
 import datetime
 import numpy as np
 import tensorflow as tf
-
+import RESNet
 
 # packages needed for MS-SSIM-GL1 loss
 from tensorflow.python.ops.image_ops_impl import _fspecial_gauss
@@ -9,12 +9,23 @@ from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 
 # optional, must be removed for server
-import matplotlib.pyplot as plt
 # tf.enable_eager_execution()
 # tf.executing_eagerly()
 
 
-lossflavour = ['MAE', 'MSE', 'SSIM', 'MS-SSIM-GL1'][1]
+
+training = True
+predict = False
+platform = ['hpc', 'cloud', 'home'][2]
+root = {'hpc':'/scratch2/truhkop/',
+        'cloud':'/home/cloud/',
+        'home':'C:/Users/timru/Documents/CODE/deepMRI1/'} [platform]
+lossflavour = ['MAE', 'MSE', 'SSIM','MS-SSIM', 'MS-SSIM-GL1'][1]
+filters = [2, 4]
+kernelsize = 5
+reps = 3
+
+
 def REDnet_model_fn (features, labels, mode):
     """Image Restoration Using Convolutional Auto-encoders with Symmetric Skip-Connections
     :reps: number of repeated application of convoltuions/deconvolutions in one level
@@ -23,9 +34,6 @@ def REDnet_model_fn (features, labels, mode):
     :kernelsize: size of each filter.
     """
 
-    filters = [2, 4]
-    kernelsize = 5
-    reps = 3
 
     # (operations definition) --------------------------------------------------
     def leveld (inputs, filters, scope):
@@ -135,25 +143,20 @@ def REDnet_model_fn (features, labels, mode):
         )
 
     # (last layer) -------------------------------------------------------------
-    residual = tf.contrib.layers.conv2d(
+    residual = tf.contrib.layers.conv2d( # (1*1*no of channels within) aggregating over all filters
         inputs=d,
-        kernel_size=kernelsize,
+        kernel_size=1,
         stride=1,
         num_outputs=1,
         padding='SAME',
         activation_fn=tf.nn.relu,
-        normalizer_fn=tf.layers.batch_normalization,
-        normalizer_params={
-            'momentum': 0.99,
-            'epsilon': 0.001,
-            'trainable': False,
-            'training': mode == tf.estimator.ModeKeys.TRAIN}
     )
 
     prediction = residual + features
+
     # variable scope access like this during session?
-    #vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
-    #for v in vars:
+    # vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+    # for v in vars:
     #    print(v.name)
 
     # get all operations
@@ -191,7 +194,6 @@ def REDnet_model_fn (features, labels, mode):
             labels=labels,
             predictions=prediction)
 
-    # throws an error
     def ssim (prediction, labels):
         # ssim returns a tensor containing ssim value for each image in batch: reduce!
         return 1 - tf.reduce_mean(
@@ -199,6 +201,14 @@ def REDnet_model_fn (features, labels, mode):
                 prediction,
                 labels,
                 max_val=1))
+
+    def ssim_multiscale(prediction, label):
+        return 1- tf.reduce_mean(
+            tf.image.ssim_multiscale(
+                    img1=label,
+                    img2=prediction,
+                    max_val=1)
+            )
 
     def loss_ssim_multiscale_gl1 (prediction, label, alpha=0.84):
         ''' Loss function, calculating alpha * Loss_msssim + (1-alpha) gaussiankernel * L1_loss
@@ -217,7 +227,7 @@ def REDnet_model_fn (features, labels, mode):
         gl1 = tf.reduce_sum(kernel_on_l1) / img_patch_norm
 
         # ssim_multiscale already calculates the dyalidic pyramid (with as replacment avg.pooling)
-        msssim = tf.reduce_sum(
+        msssim = tf.reduce_mean(
             tf.image.ssim_multiscale(
                 img1=label,
                 img2=prediction,
@@ -225,21 +235,23 @@ def REDnet_model_fn (features, labels, mode):
         )
         return alpha * (1 - msssim) + (1 - alpha) * gl1
 
-    # Discrete Gaussian Kernel (required only in MS-SSIM-GL1 case)
-    # not in MS-SSIM-GL1 function, as it is executed only once
-    # values according to MS-SSIM source code
-    filter_size = constant_op.constant(11, dtype=dtypes.int32)
-    filter_sigma = constant_op.constant(1.5, dtype=features.dtype)
-    gaussiankernel = _fspecial_gauss(
-        size=filter_size,
-        sigma=filter_sigma
-    )
+    if lossflavour == 'MS-SSIM-GL1':
+        # Discrete Gaussian Kernel (required only in MS-SSIM-GL1 case)
+        # not in MS-SSIM-GL1 function, as it is executed only once
+        # values according to MS-SSIM source code
+        filter_size = constant_op.constant(11, dtype=dtypes.int32)
+        filter_sigma = constant_op.constant(1.5, dtype=features.dtype)
+        gaussiankernel = _fspecial_gauss(
+            size=filter_size,
+            sigma=filter_sigma
+        )
 
     # for TRAIN & EVAL
     loss = {
         'MAE': l1,
         'MSE': mse,
         'SSIM': ssim,
+        'MS-SSIM': ssim_multiscale,
         'MS-SSIM-GL1': loss_ssim_multiscale_gl1
     }[lossflavour](prediction, labels)
     tf.summary.scalar("Value_Loss_Function", loss)
@@ -285,13 +297,8 @@ def REDnet_model_fn (features, labels, mode):
             }
         )
 
-    # Adam details:
-    # https://machinelearningmastery.com/adam-optimization-algorithm-for-deep-learning/
-
 
 # (ESTIMATOR) ------------------------------------------------------------------
-# root = '/home/cloud/' # for jupyter
-root = 'C:/Users/timru/Documents/CODE/deepMRI1/'
 d = datetime.datetime.now()
 
 REDnet = tf.estimator.Estimator(
@@ -307,82 +314,114 @@ print("generated REDnet_{}_{}_{}_{} Estimator".format(d.month, d.day, d.hour, d.
 
 
 # (DATA) -----------------------------------------------------------------------
-def np_read_patients (root, patients=range(1, 4)):
-    '''Read and np.concatenate the patients arrays for noise and true image.'''
-    def helper (string):
-        return np.concatenate(
-            tuple(np.load(root + arr) for arr in
-                  list('P{}_{}.npy'.format(i, string) for i in patients)),
-            axis=0)
+if platform == 'hpc':
+    if training:
+        train_data = np.load('/scratch2/truhkop/knee1/data/X_train.npy')
+        train_labels = np.load('/scratch2/truhkop/knee1/data/Y_train.npy')
 
-    return helper('X'), helper('Y')
+    if predict:
+        test_data= np.load('/scratch2/truhkop/knee1/data/X_test.npy')
+        test_labels=  np.load('/scratch2/truhkop/knee1/data/Y_test.npy')
 
+elif platform == 'cloud':
+    pass
 
-def subset_arr (X, Y, batchind=range(5)):
-    '''intended to easily subset data into train and test.
-    :return: a Tuple of  two arrays resulted from the subset: X and Y in this order.
-    The arrays are reshaped to [batchsize, hight, width, channels]'''
-    return tuple(np.reshape(z[batchind, :, :], [-1, 256, 256, 1]) for z in [X, Y])
+elif platform == 'home':
+    # instead of tf.reshape, as it produces a tensor unknown to .numpy_input_fn()
 
+    def np_read_patients (root, patients=range(1, 4)):
+        '''Read and np.concatenate the patients arrays for noise and true image.'''
 
-X, Y = np_read_patients(root='C:/Users/timru/Documents/CODE/deepMRI1/data/',
-                        patients=range(1, 2))
-train_data, train_labels = subset_arr(X, Y, batchind=range(5))
-test_data, test_labels = subset_arr(X, Y, batchind=range(5, 8))
+        def helper (string):
+            return np.concatenate(
+                tuple(np.load(root + arr) for arr in
+                      list('P{}_{}.npy'.format(i, string) for i in patients)),
+                axis=0)
+
+        return helper('X'), helper('Y')
+
+    def subset_arr (X, Y, batchind=range(5)):
+        '''intended to easily subset data into train and test.
+        :return: a Tuple of  two arrays resulted from the subset: X and Y in this order.
+        The arrays are reshaped to [batchsize, hight, width, channels]'''
+        return tuple(np.reshape(z[batchind, :, :], [-1, 256, 256, 1]) for z in [X, Y])
+
+    X, Y = np_read_patients(
+        root='C:/Users/timru/Documents/CODE/deepMRI1/data/',
+        patients=range(1, 2))
+
+    if training:
+        train_data, train_labels = subset_arr(X, Y, batchind=range(20))
+
+    if predict:
+        test_data, test_labels = subset_arr(X, Y, batchind=range(5, 8))
+
 
 # (TRAINING) -------------------------------------------------------------------
 # learning with mini batch (128 images), 50 epochs
 # rewrite with tf.placeholder, session.run
 # https://stackoverflow.com/questions/49743838/predict-single-image-after-training-model-in-tensorflow
-train_input_fn = tf.estimator.inputs.numpy_input_fn(
-    x=train_data,
-    y=train_labels,
-    batch_size=2,
-    num_epochs=None,
-    shuffle=True)
+if training == True:
+    train_input_fn = tf.estimator.inputs.numpy_input_fn(
+        x=train_data,
+        y=train_labels,
+        batch_size=2,
+        num_epochs=None,
+        shuffle=True)
 
-REDnet.train(input_fn=train_input_fn, steps=20)
+    REDnet.train(input_fn=train_input_fn, steps=10)
 
 # (PREDICTION) -----------------------------------------------------------------
-test_input_fn = tf.estimator.inputs.numpy_input_fn(
-    x=test_data,
-    y=test_labels,
-    batch_size=1,
-    num_epochs=None,
-    shuffle=True)
+if predict == True:
+    test_input_fn = tf.estimator.inputs.numpy_input_fn(
+        x=test_data,
+        y=test_labels,
+        batch_size=1,
+        num_epochs=None,
+        shuffle=True)
 
-predicted = REDnet.predict(input_fn=test_input_fn)  # , checkpoint_path=root +
-# 'model/' + "DnCNN_{}_{}_{}_{}".format(d.month, d.day, d.hour, d.minute))
-pred = list(predicted)
+    restoreREDnet = tf.estimator.Estimator(
+        model_fn=REDnet_model_fn,
+        model_dir=root + 'model/' + 'REDnet_model_restored',
+        warm_start_from='C:/Users/timru/Documents/CODE'
+                        '/deepMRI1/model/REDnet_MSE_3_3_9_11')
 
-
-# (plot the predicted) ---------------------------------------------------------
-def inspect_images (noisy, pred, true, index, scaling=256):
-    """
-    :param noisy: Array of noisy input images
-    :param pred: Array of predicted images
-    :param true: Array of ground truth images
-    :param index: Images index in all of the above, which shall be plotted in
-    parallel
-    :param scaling: factor, with which the images are scaled (input
-    originally was downscaled by scaling**-1
-    """
-
-    plt.figure(1)
-    plt.subplot(131)
-    plt.title('Noisy Input')
-    plt.imshow(np.reshape(noisy[index], (256, 256)) * scaling, cmap='gray')
-
-    plt.subplot(132)
-    plt.title('Prediction')
-    plt.imshow(np.reshape(pred[index], (256, 256)) * scaling, cmap='gray')
-
-    plt.subplot(133)
-    plt.title('Truth')
-    plt.imshow(np.reshape(true[index], (256, 256)) * scaling, cmap='gray')
-
-    plt.show()
+    predictfromrestored = list(restoreREDnet.predict(test_input_fn))
+    pred = list(predictfromrestored)
 
 
-inspect_images(noisy=test_data, pred=pred, true=test_labels, index=0)
-inspect_images(noisy=test_data, pred=pred, true=test_labels, index=1)
+    # predicted = REDnet.predict(input_fn=test_input_fn)  # , checkpoint_path=root +
+    # # 'model/' + "DnCNN_{}_{}_{}_{}".format(d.month, d.day, d.hour, d.minute))
+    # pred = list(predicted)
+
+    # (plot the predicted) ---------------------------------------------------------
+    import matplotlib.pyplot as plt
+    def inspect_images (noisy, pred, true, index, scaling=256):
+        """
+        :param noisy: Array of noisy input images
+        :param pred: Array of predicted images
+        :param true: Array of ground truth images
+        :param index: Images index in all of the above, which shall be plotted in
+        parallel
+        :param scaling: factor, with which the images are scaled (input
+        originally was downscaled by scaling**-1
+        """
+
+        plt.figure(1)
+        plt.subplot(131)
+        plt.title('Noisy Input')
+        plt.imshow(np.reshape(noisy[index], (256, 256)) * scaling, cmap='gray')
+
+        plt.subplot(132)
+        plt.title('Prediction')
+        plt.imshow(np.reshape(pred[index], (256, 256)) * scaling, cmap='gray')
+
+        plt.subplot(133)
+        plt.title('Truth')
+        plt.imshow(np.reshape(true[index], (256, 256)) * scaling, cmap='gray')
+
+        plt.show()
+
+
+    inspect_images(noisy=test_data, pred=pred, true=test_labels, index=0)
+    inspect_images(noisy=test_data, pred=pred, true=test_labels, index=1)
