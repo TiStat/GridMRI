@@ -1,9 +1,16 @@
+import numpy as np
+import tensorflow as tf
+
+# grid search related
 import pickle
+import pandas as pd
 from datetime import datetime
 
-import numpy as np
-import pandas as pd
-import tensorflow as tf
+# image saving & subset test_data related
+import random
+import imageio
+
+# MS-SSIM-GL1 related
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.ops.image_ops_impl import _fspecial_gauss
@@ -17,6 +24,11 @@ root = {
     'cloud':'/home/cloud/',
     'home':'C:/Users/timru/Documents/CODE/deepMRI1/'} [platform]
 
+# write out the predicted images of all models + once true and noisy
+# be carefull, that root + '/img/' exists!
+saveimage = True
+
+
 # (DATA) -----------------------------------------------------------------------
 if platform == 'hpc':
     train_data = np.load('/scratch2/truhkop/knee1/data/X_train.npy')
@@ -25,15 +37,21 @@ if platform == 'hpc':
     test_data= np.load('/scratch2/truhkop/knee1/data/X_test.npy')
     test_labels=  np.load('/scratch2/truhkop/knee1/data/Y_test.npy')
 
+    # shorten predict / eval
+    random.seed(42)
+    randindex = random.sample(list(range(test_data.shape[0])), k=300)
+    test_data = test_data[randindex]
+    test_labels = test_labels[randindex]
+
 elif platform == 'cloud':
     train_data = np.load(root +'/data/X_test_subset.npy')
     train_labels = np.load(root + '/data/Y_test_subset.npy')
 
     test_data = np.load(root +'/data/X_test_subset.npy')
     test_labels = np.load(root + '/data/Y_test_subset.npy')
+
 elif platform == 'home':
     # instead of tf.reshape, as it produces a tensor unknown to .numpy_input_fn()
-
     def np_read_patients (root, patients=range(1, 4)):
         '''Read and np.concatenate the patients arrays for noise and true image.'''
 
@@ -56,8 +74,18 @@ elif platform == 'home':
         patients=range(1, 2))
 
     train_data, train_labels = subset_arr(X, Y, batchind=range(20))
-    test_data, test_labels = subset_arr(X, Y, batchind=range(5, 8))
+    test_data, test_labels = subset_arr(X, Y, batchind=range(11))
 
+# (save noisy & true img) ------------------------------------------------------
+if saveimage:
+    random.seed(42)
+    imgind = random.sample(list(range(test_data.shape[0])), k=10)
+
+    for ind in imgind:
+        noisy = (test_data[ind] * 255).astype(np.uint8)
+        trueim = (test_labels[ind] * 255).astype(np.uint8)
+        imageio.imwrite(root + '/img/noisy_{}.jpg'.format(ind), noisy)
+        imageio.imwrite(root + '/img/trueim_{}.jpg'.format(ind), trueim)
 
 # (Benchmark) ------------------------------------------------------------------
 print('starting Benchmarking')
@@ -74,15 +102,14 @@ with tf.Session() as sess:
     sess.run(init)
     SSIM = sess.run(SSIM)
 
-with open("benchmark.txt", "wb") as fp:  # pickling
+with open(root+ "grid/benchmark.txt", "wb") as fp:  # pickling
     pickle.dump(pd.DataFrame({'name':'benchmark','MAE': MAE, 'MSE': MSE, 'SSIM': SSIM}), fp)
 
 # (Grid formulation) -----------------------------------------------------------
-with open("grid.txt", "rb") as fp:  # Unpickling
+with open(root + "grid.txt", "rb") as fp:  # Unpickling
     grid = pickle.load(fp)
-
-pd.DataFrame(grid)
 # pd.DataFrame(grid)
+
 # setting up the parameter environment, upon which model_fn harvests
 for config in grid:
     kernel = config['kernel']
@@ -92,11 +119,8 @@ for config in grid:
     reps = config['reps']
     dncnn_skip = config['dncnn_skip']
     trainsteps = config['trainsteps']
-
-    if len(filters) != reps:
-        print('fucked up dimensions')
-    if len(filters) % 2 != 1:
-        print('fucked up uneven length')
+    sampling = config['sampling']
+    Uskip = config['Uskip']
 
     def Unet_model_fn (features, labels, mode):
         ''' :kernel: kernelsize, skalar parameter for conv kernel,
@@ -143,13 +167,13 @@ for config in grid:
                     'trainable': False,
                     'training': mode == tf.estimator.ModeKeys.TRAIN}
             ))
-
-            nodes.append(tf.layers.max_pooling2d(
-                inputs=nodes[-1],
-                pool_size=2,
-                strides=1,
-                padding='VALID',
-            ))
+            if sampling:
+                nodes.append(tf.layers.max_pooling2d(
+                    inputs=nodes[-1],
+                    pool_size=2,
+                    strides=1,
+                    padding='VALID',
+                ))
 
         nodes.append(tf.contrib.layers.repeat(
             inputs=nodes[-1],
@@ -174,22 +198,26 @@ for config in grid:
         for f, s in zip(range(depth//2 + 1, depth), reversed(range(1,depth,2))):
             # note skipindecies = range(depth // 2) if nodes was [conv, conv, conv]
             # but is [features, conv, pool, conv, deconv, conv] for depth = 3
-            nodes.append(tf.contrib.layers.conv2d_transpose(
-                inputs=nodes[-1],
-                kernel_size=2,
-                stride=1,
-                num_outputs=filters[f],
-                padding='VALID',
-                activation_fn=tf.nn.relu,
-                normalizer_fn=tf.layers.batch_normalization,
-                normalizer_params={
-                    'momentum': 0.99,
-                    'epsilon': 0.001,
-                    'trainable': False,
-                    'training': mode == tf.estimator.ModeKeys.TRAIN},
-            ))
+            if sampling:
+                nodes.append(tf.contrib.layers.conv2d_transpose(
+                    inputs=nodes[-1],
+                    kernel_size=2,
+                    stride=1,
+                    num_outputs=filters[f],
+                    padding='VALID',
+                    activation_fn=tf.nn.relu,
+                    normalizer_fn=tf.layers.batch_normalization,
+                    normalizer_params={
+                        'momentum': 0.99,
+                        'epsilon': 0.001,
+                        'trainable': False,
+                        'training': mode == tf.estimator.ModeKeys.TRAIN},
+                ))
 
-            skip = tf.concat([nodes[s], nodes[-1]], axis=3)
+            if Uskip:
+                skip = tf.concat([nodes[s], nodes[-1]], axis=3)
+            else:
+                skip = nodes[-1]
 
             nodes.append(tf.contrib.layers.repeat(
                 inputs=skip,
@@ -254,6 +282,7 @@ for config in grid:
                     labels,
                     max_val=1))
 
+        # CAREFULL, both multiscale versions explode!
         def ssim_multiscale (prediction, label):
             return 1 - tf.reduce_mean(
                 tf.image.ssim_multiscale(
@@ -380,7 +409,6 @@ for config in grid:
     print('Time elapsed (hh:mm:ss.ms) {}'.format(time_elapsed))
 
 
-
     # (EVALUATE) ---------------------------------------------------------------
     test_input_fn = tf.estimator.inputs.numpy_input_fn(
         x=test_data,
@@ -414,10 +442,10 @@ for config in grid:
         sess.run(init)
         SSIM = sess.run(SSIM)
 
-    with open("benchmark.txt", "rb") as fp:  # Unpickling
+    with open(root+ "/grid/benchmark.txt", "rb") as fp:  # Unpickling
         bench = pickle.load(fp)
     newmodel = pd.DataFrame({'name': modelID, 'MAE': MAE, 'MSE': MSE, 'SSIM': SSIM})
-    with open("benchmark.txt", "wb") as fp:  # pickling
+    with open(root+ "/grid/benchmark.txt", "wb") as fp:  # pickling
         pickle.dump(pd.concat([bench, newmodel]), fp)
         # note that benchmark.txt contains all MAE, MSE, SSIM for all predictions
 
@@ -427,4 +455,13 @@ for config in grid:
     config['M-MAE'] = np.mean(MAE)
     config['M-MSE'] = np.mean(MSE)
     config['M-SSIM'] = np.mean(SSIM)
+
     print('Evaluated {}'.format(modelID))
+
+    if saveimage:
+        for ind in imgind:
+            img = (predictions[ind] * 255).astype(np.uint8)
+            imageio.imwrite(root + '/img/{}_predicted_{}.jpg'.format(modelID, ind), img)
+
+with open(root+"/grid/gridResult.txt", "wb") as fp:  # pickling
+    pickle.dump(grid, fp)
