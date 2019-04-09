@@ -1,15 +1,14 @@
-import numpy as np
-import tensorflow as tf
-
 # grid search related
+import os
 import pickle
-import pandas as pd
-from datetime import datetime
-
 # image saving & subset test_data related
 import random
-import imageio
+from datetime import datetime
 
+import imageio
+import numpy as np
+import pandas as pd
+import tensorflow as tf
 # MS-SSIM-GL1 related
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
@@ -18,24 +17,33 @@ from tensorflow.python.ops.image_ops_impl import _fspecial_gauss
 #tf.enable_eager_execution()
 #tf.executing_eagerly()
 
+# (system configuration) ------------------------------------------
 platform = ['hpc', 'cloud', 'home'][2]
 root = {
-    'hpc':'/scratch2/truhkop/',
-    'cloud':'/home/cloud/',
-    'home':'C:/Users/timru/Documents/CODE/deepMRI1/'} [platform]
+    'hpc': '/scratch2/truhkop/',
+    'cloud': '/home/cloud/',
+    'home': 'C:/Users/timru/Documents/CODE/deepMRI1/'}[platform]
 
 # write out the predicted images of all models + once true and noisy
-# be carefull, that root + '/img/' exists!
 saveimage = True
 
+# (folder creation) -----------------------------------------------------------
+# note that grid1.txt must be in root
+d = datetime.now()
+gridname = 'grid0.txt'
+gridfoldername = '{}_{}_{}_{}_{}_{}'.format(d.month, d.day, d.hour, d.minute, d.second, gridname[:-4])
+gridfolderpath = root + gridfoldername + '/'
+gridimgpath = root +gridfoldername + 'img/'
+os.mkdir(gridfolderpath)
+os.mkdir(gridimgpath)
 
-# (DATA) -----------------------------------------------------------------------
+# (load DATA) ------------------------------------------------------------------
 if platform == 'hpc':
     train_data = np.load('/scratch2/truhkop/knee1/data/X_train.npy')
     train_labels = np.load('/scratch2/truhkop/knee1/data/Y_train.npy')
 
-    test_data= np.load('/scratch2/truhkop/knee1/data/X_test.npy')
-    test_labels=  np.load('/scratch2/truhkop/knee1/data/Y_test.npy')
+    test_data = np.load('/scratch2/truhkop/knee1/data/X_test.npy')
+    test_labels = np.load('/scratch2/truhkop/knee1/data/Y_test.npy')
 
     # shorten predict / eval
     random.seed(42)
@@ -44,37 +52,18 @@ if platform == 'hpc':
     test_labels = test_labels[randindex]
 
 elif platform == 'cloud':
-    train_data = np.load(root +'/data/X_test_subset.npy')
+    train_data = np.load(root + '/data/X_test_subset.npy')
     train_labels = np.load(root + '/data/Y_test_subset.npy')
 
-    test_data = np.load(root +'/data/X_test_subset.npy')
-    test_labels = np.load(root + '/data/Y_test_subset.npy')
+    test_data = np.load(root + '/data/X_test_subset.npy')[0:10]
+    test_labels = np.load(root + '/data/Y_test_subset.npy')[0:10]
 
 elif platform == 'home':
-    # instead of tf.reshape, as it produces a tensor unknown to .numpy_input_fn()
-    def np_read_patients (root, patients=range(1, 4)):
-        '''Read and np.concatenate the patients arrays for noise and true image.'''
+    train_data = np.load(root + '\data\X_test_subset.npy')
+    train_labels = np.load(root + '\data\X_test_subset.npy')
 
-        def helper (string):
-            return np.concatenate(
-                tuple(np.load(root + arr) for arr in
-                      list('P{}_{}.npy'.format(i, string) for i in patients)),
-                axis=0)
-
-        return helper('X'), helper('Y')
-
-    def subset_arr (X, Y, batchind=range(5)):
-        '''intended to easily subset data into train and test.
-        :return: a Tuple of  two arrays resulted from the subset: X and Y in this order.
-        The arrays are reshaped to [batchsize, hight, width, channels]'''
-        return tuple(np.reshape(z[batchind, :, :], [-1, 256, 256, 1]) for z in [X, Y])
-
-    X, Y = np_read_patients(
-        root='C:/Users/timru/Documents/CODE/deepMRI1/data/',
-        patients=range(1, 2))
-
-    train_data, train_labels = subset_arr(X, Y, batchind=range(20))
-    test_data, test_labels = subset_arr(X, Y, batchind=range(11))
+    test_data = train_data[:11]
+    test_labels = train_labels[:11]
 
 # (save noisy & true img) ------------------------------------------------------
 if saveimage:
@@ -84,34 +73,39 @@ if saveimage:
     for ind in imgind:
         noisy = (test_data[ind] * 255).astype(np.uint8)
         trueim = (test_labels[ind] * 255).astype(np.uint8)
-        imageio.imwrite(root + '/img/noisy_{}.jpg'.format(ind), noisy)
-        imageio.imwrite(root + '/img/trueim_{}.jpg'.format(ind), trueim)
+        imageio.imwrite(gridimgpath + 'noisy_{}.jpg'.format(ind), noisy)
+        imageio.imwrite(gridimgpath + 'trueim_{}.jpg'.format(ind), trueim)
 
 # (Benchmark) ------------------------------------------------------------------
 print('starting Benchmarking')
 MAE = np.array([np.mean(yi - xi) for xi, yi in zip(test_data, test_labels)])
-MSE = np.array([np.mean((yi - xi)**2) for xi, yi in zip(test_data, test_labels)])
+MSE = np.array([np.mean((yi - xi) ** 2) for xi, yi in zip(test_data, test_labels)])
 
 X = tf.Variable(test_data)
 Y = tf.Variable(test_labels)
 Z = tf.stack([X, Y], axis=1)
-SSIM = tf.map_fn(lambda x: tf.image.ssim(img1 = x[0], img2 = x[1], max_val =1), Z, dtype=tf.float32)
+SSIM = tf.map_fn(lambda x: tf.image.ssim(img1=x[0], img2=x[1], max_val=1), Z, dtype=tf.float32)
 
 init = tf.global_variables_initializer()
 with tf.Session() as sess:
     sess.run(init)
     SSIM = sess.run(SSIM)
 
-with open(root+ "grid/benchmark.txt", "wb") as fp:  # pickling
-    pickle.dump(pd.DataFrame({'name':'benchmark','MAE': MAE, 'MSE': MSE, 'SSIM': SSIM}), fp)
+with open(gridfolderpath + "benchmark.txt", "wb") as fp:  # pickling
+    pickle.dump(pd.DataFrame({'name': 'benchmark', 'MAE': MAE, 'MSE': MSE, 'SSIM': SSIM}), fp)
 
 # (Grid formulation) -----------------------------------------------------------
-with open(root + "grid.txt", "rb") as fp:  # Unpickling
+# load the Grid with all configurations
+with open(gridname, "rb") as fp:  # Unpickling
     grid = pickle.load(fp)
-# pd.DataFrame(grid)
+    # pd.DataFrame(grid)
+
+# initialize checkpoints
+with open(gridfolderpath + "gridResult.txt", "wb") as fp:  # pickling
+    pickle.dump(grid, fp)
 
 # setting up the parameter environment, upon which model_fn harvests
-for config in grid:
+for counter, config in enumerate(grid):
     kernel = config['kernel']
     filters = config['filters']
     lossflavour = config['lossflavour']
@@ -131,11 +125,18 @@ for config in grid:
             :batch: size of the batch, applied to all conv layers
             :reps: list, giving the number of stacked convs in the respective conv_rep block
             :dncnn_skip: boolean, optional skip connectionen from input (x) to prediction. (p = x + netoutput)
+            :sampling: boolean  whether or whether not to up /downsample the image with pool/deconv
+            :Uskip: boolean, whether or whether not to use the unet skipping scheme
             :trainsteps: integer, number of training steps for all model configurations
+
+            to obtain a DnCNN like architechture set
+            dncnn_skip = True
+            samplind = False
+            Uskip = False
         '''
 
-        # nodes of tf.graph, stored in list, that extends with each operation
-        # therefore direct path: input=nodes[-1]
+        # tf.graph is stored in list, that extends with each graph operation,
+        # facilitating the skipping schemes. therefore direct path through graph: input=nodes[-1]
         nodes = list()
         nodes.append(features)
         depth = len(filters)
@@ -147,12 +148,12 @@ for config in grid:
 
         # considering depth = 3, that nodes = [features, conv , pool, conv, deconv, conv]
         # skip-indexing needs to be adjusted:
-        #[list(range(1,depth,2)), depth, list(reversed(range(1,depth,2)))]
+        # [list(range(1,depth,2)), depth, list(reversed(range(1,depth,2)))]
 
         # downward path
         for f in range(depth // 2):
             nodes.append(tf.contrib.layers.repeat(
-                inputs=nodes[-1], # always takes previous conv2d
+                inputs=nodes[-1],  # always takes previous conv2d
                 num_outputs=filters[f],
                 repetitions=reps[f],
                 layer=tf.contrib.layers.conv2d,
@@ -193,9 +194,9 @@ for config in grid:
         ))
 
         # upward path
-        # note that while filters need to linearly traverse, where it left off,
+        # note that while filters need to linearly traverse, where they left off,
         # the skipping index depends on the nodes scheme.
-        for f, s in zip(range(depth//2 + 1, depth), reversed(range(1,depth,2))):
+        for f, s in zip(range(depth // 2 + 1, depth), reversed(range(1, depth, 2))):
             # note skipindecies = range(depth // 2) if nodes was [conv, conv, conv]
             # but is [features, conv, pool, conv, deconv, conv] for depth = 3
             if sampling:
@@ -239,10 +240,10 @@ for config in grid:
         prediction = tf.contrib.layers.conv2d(
             inputs=nodes[-1],
             num_outputs=1,
-            kernel_size=kernel,
+            kernel_size=1,
             stride=1,
             padding='SAME',
-            activation_fn=tf.nn.relu
+            activation_fn=None
         )
 
         if dncnn_skip:
@@ -260,7 +261,7 @@ for config in grid:
             name = var.name
             name = name.replace(':', '_')
             tf.summary.histogram(name, var)
-        merged_summary = tf.summary.merge_all()
+
 
         # TRAINING
         # (losses) -----------------------------------------------------------------
@@ -275,20 +276,22 @@ for config in grid:
                 predictions=prediction)
 
         def ssim (prediction, labels):
-            # ssim returns a tensor containing ssim value for each image in batch: reduce!
-            return 1 - tf.reduce_mean(
+            # ssim returns a tensor containing ssim value
+            # for each image in batch: reduce!
+            # note, that SSIM is to be maximized
+            return -1*(1 - tf.reduce_mean(
                 tf.image.ssim(
                     prediction,
                     labels,
-                    max_val=1))
+                    max_val=1)))
 
-        # CAREFULL, both multiscale versions explode!
         def ssim_multiscale (prediction, label):
-            return 1 - tf.reduce_mean(
+            return -1*(1 - tf.reduce_mean(
                 tf.image.ssim_multiscale(
                     img1=label,
                     img2=prediction,
-                    max_val=1)
+                    max_val=1,
+                    power_factors=(0.1333 + 0.0448, 0.2856, 0.3001, 0.2363)))
             )
 
         def ssim_multiscale_gl1 (prediction, label, alpha=0.84):
@@ -307,13 +310,13 @@ for config in grid:
             img_patch_norm = tf.to_float(kernel_on_l1.shape[1] * filter_size ** 2)
             gl1 = tf.reduce_sum(kernel_on_l1) / img_patch_norm
 
-            # ssim_multiscale already calculates the dyalidic pyramid (with as replacment avg.pooling)
-            msssim = tf.reduce_mean(
+            msssim = -1*(tf.reduce_mean(
                 tf.image.ssim_multiscale(
                     img1=label,
                     img2=prediction,
-                    max_val=1)
-            )
+                    max_val=1,
+                    power_factors=(0.0448, 0.2856, 0.3001, 0.2363))
+            ))
             return alpha * (1 - msssim) + (1 - alpha) * gl1
 
         if lossflavour == 'MS-SSIM-GL1':
@@ -340,13 +343,13 @@ for config in grid:
         if mode == tf.estimator.ModeKeys.TRAIN:
             tf.summary.histogram('Summary_final_layer', prediction)
             tf.summary.histogram('Summary_labels', labels)
-            tf.summary.image('Input_Image', features, max_outputs = 4)
-            tf.summary.image('Output_Image', prediction, max_outputs = 4)
-            tf.summary.image('True_Image', labels, max_outputs = 4)
+            tf.summary.image('Input_Image', features, max_outputs=4)
+            tf.summary.image('Output_Image', prediction, max_outputs=4)
+            tf.summary.image('True_Image', labels, max_outputs=4)
             update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
             with tf.control_dependencies(update_ops):
                 original_optimizer = tf.train.AdamOptimizer(
-                    learning_rate=0.035)
+                    learning_rate=0.03)
                 optimizer = tf.contrib.estimator.clip_gradients_by_norm(
                     original_optimizer,
                     clip_norm=5.0)
@@ -374,22 +377,26 @@ for config in grid:
                     # 'Structural Similarity Index (SSIM)': tf.image.ssim(
                     #     img1=prediction,
                     #     img2=labels,
-                    #     max_val=1) # needs custom eval_metric_opc function, returning (metric value, update_ops)
+                    #     max_val=1) # needs custom eval_metric_opc function,
+                    #     # returning (metric value, update_ops)
                 }
             )
+
+        merged_summary = tf.summary.merge_all()
 
 
     # (ESTIMATORS) -------------------------------------------------------------
     d = datetime.now()
-    modelID = 'Unet_{}_{}_{}_{}_{}'.format(lossflavour, d.month, d.day, d.hour, d.minute, d.second)
+    modelID = '{}_Unet_{}_{}_{}_{}_{}_{}'.format(counter, lossflavour, d.month,
+                                                 d.day, d.hour, d.minute, d.second)
     Unet = tf.estimator.Estimator(
         model_fn=Unet_model_fn,
-        model_dir=root + 'grid/' + modelID,
+        model_dir=gridfolderpath + modelID,
         config=tf.estimator.RunConfig(
-            save_summary_steps=20,
-            log_step_count_steps=20))
+            save_summary_steps=200,
+            log_step_count_steps=1000))
 
-    print('generated {} Estimator  ----------------------------------------------'.format(modelID))
+    print('--------------------  generated {} Estimator  --------------------------------'.format(modelID))
     print('Config: {}'.format(config))
 
     # (TRAINING) ---------------------------------------------------------------
@@ -401,13 +408,16 @@ for config in grid:
         num_epochs=None,
         shuffle=True)
 
-    Unet.train(input_fn=train_input_fn, steps=trainsteps)
+    try:
+        Unet.train(input_fn=train_input_fn, steps=trainsteps)
+    except Exception as e:
+        print(e)
+        continue
 
     # write out to grid.txt note the view!
     time_elapsed = datetime.now() - start_time
     print('Trained {}'.format(modelID))
     print('Time elapsed (hh:mm:ss.ms) {}'.format(time_elapsed))
-
 
     # (EVALUATE) ---------------------------------------------------------------
     test_input_fn = tf.estimator.inputs.numpy_input_fn(
@@ -418,7 +428,11 @@ for config in grid:
         shuffle=False)
 
     # evaluation for each prediction stored in benchmark.txt
-    predictions = list(Unet.predict(input_fn=test_input_fn))
+    try:
+        predictions = list(Unet.predict(input_fn=test_input_fn))
+    except Exception as d:
+        print(d)
+        continue
     print('predicted {}'.format(modelID))
 
     MAE = np.array([np.mean(yi - xi) for xi, yi in zip(test_data, predictions)])
@@ -442,26 +456,38 @@ for config in grid:
         sess.run(init)
         SSIM = sess.run(SSIM)
 
-    with open(root+ "/grid/benchmark.txt", "rb") as fp:  # Unpickling
+    # (Checkpoint after model) -----------------------------------------------------------
+    with open(gridfolderpath + "benchmark.txt", "rb") as fp:  # Unpickling
         bench = pickle.load(fp)
-    newmodel = pd.DataFrame({'name': modelID, 'MAE': MAE, 'MSE': MSE, 'SSIM': SSIM})
-    with open(root+ "/grid/benchmark.txt", "wb") as fp:  # pickling
-        pickle.dump(pd.concat([bench, newmodel]), fp)
-        # note that benchmark.txt contains all MAE, MSE, SSIM for all predictions
+    newmodel = pd.DataFrame(
+        {'name': modelID, 'MAE': MAE, 'MSE': MSE, 'SSIM': SSIM})
 
-    # aggregate the results and write to grid.txt note the view on config
-    config['name'] = modelID
-    config['traintime'] = time_elapsed
-    config['M-MAE'] = np.mean(MAE)
-    config['M-MSE'] = np.mean(MSE)
-    config['M-SSIM'] = np.mean(SSIM)
+    with open(gridfolderpath + "benchmark.txt", "wb") as fp:  # pickling
+        pickle.dump(pd.concat([bench, newmodel]), fp)
+        # note that benchmark.txt contains all MAE, MSE, SSIM
+        # for every single image prediction
+
+    # load checkpoint
+    with open(gridfolderpath + "gridResult.txt", "rb") as fp:  # Unpickling
+        grid = pickle.load(fp)
+
+    with open(gridfolderpath + "gridResult.txt", "wb") as fp:  # pickling
+        config = grid[counter]
+        # aggregate the results and write to grid.txt note the view on config
+        config['name'] = modelID
+        config['traintime'] = time_elapsed
+        config['M-MAE'] = np.mean(MAE)
+        config['M-MSE'] = np.mean(MSE)
+        config['M-SSIM'] = np.mean(SSIM)
+        pickle.dump(grid, fp)
 
     print('Evaluated {}'.format(modelID))
 
     if saveimage:
         for ind in imgind:
             img = (predictions[ind] * 255).astype(np.uint8)
-            imageio.imwrite(root + '/img/{}_predicted_{}.jpg'.format(modelID, ind), img)
+            imageio.imwrite(
+                gridimgpath + '{}_predicted_{}.jpg'.format(modelID, ind), img)
 
-with open(root+"/grid/gridResult.txt", "wb") as fp:  # pickling
-    pickle.dump(grid, fp)
+
+
