@@ -255,7 +255,7 @@ def Unet_model_fn (features, labels, mode, params):
         'MS-SSIM-GL1': ssim_multiscale_gl1
     }[lossflavour](prediction, labels)
 
-    loss = l1(prediction, labels)
+    #loss = l1(prediction, labels)
     tf.summary.scalar("Value_Loss_Function", loss)
 
     if mode == tf.estimator.ModeKeys.TRAIN:
